@@ -4,6 +4,9 @@
 #include <array>
 
 class ExtendedKalmanFusion final: public IFusion { 
+    uint64_t latest_timestamp_us_;
+    uint64_t min_timestep_us_; 
+    
     linalg::Vector<float, 4> q_; 
     linalg::Vector<float, 3> b_; 
     linalg::Matrix<float, 7, 7> cov_; 
@@ -19,6 +22,6 @@ class ExtendedKalmanFusion final: public IFusion {
     void predict(const linalg::Vector<float, 3> &gyro, float dt) noexcept; 
     void update(const linalg::Vector<float, 3> &accel) noexcept; 
 public:
-    ExtendedKalmanFusion(const ImuSample *init = nullptr);
+    ExtendedKalmanFusion(const ImuSample *init = nullptr, const uint64_t min_timestep_us_ = 100);
     Attitude update(const ImuSample &sample) override;
 }; 

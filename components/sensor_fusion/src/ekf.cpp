@@ -4,8 +4,8 @@
 
 const float GRAVITY = 9.81;  
 
-ExtendedKalmanFusion::ExtendedKalmanFusion(const ImuSample *init = nullptr): 
-    q_ {1.0f, 0.0f, 0.0f, 0.0f}, b_ {0.0f}, cov_ { linalg::matrix_identity<float, 7, 7>() }, proc_noise_ {0.0f}, meas_noise_ {0.0f}
+ExtendedKalmanFusion::ExtendedKalmanFusion(const ImuSample *init = nullptr, const uint64_t min_timestep_us = 100): 
+    q_ {1.0f, 0.0f, 0.0f, 0.0f}, b_ {0.0f}, cov_ { linalg::matrix_identity<float, 7, 7>() }, proc_noise_ {0.0f}, meas_noise_ {0.0f}, min_timestep_us_ { min_timestep_us }
 {
     if (init != nullptr) {
         float norm = sqrtf(powf(init->acc[0], 2) + powf(init->acc[1], 2) + powf(init->acc[2], 2));
@@ -195,4 +195,22 @@ void ExtendedKalmanFusion::update(const std::array<float, 3> &accel) noexcept {
         // TODO: do something if s not invertible
         normalize_quaternion_(); 
     }
+}
+
+Attitude ExtendedKalmanFusion::update(const ImuSample &sample) {
+    const uint64_t dt_us = (sample.timestamp_us > latest_timestamp_us_)
+        ? (sample.timestamp_us - latest_timestamp_us_)
+        : 0;
+
+    if (dt_us < min_timestep_us_) {
+        return Attitude { sample.timestamp_us, q_, b_ };
+    }
+
+    const float dt = static_cast<float>(dt_us) * 1e-6f;
+    predict(sample.gyro, dt);
+    update(sample.acc);
+
+    latest_timestamp_us_ = sample.timestamp_us;
+
+    return Attitude { sample.timestamp_us, q_, b_ };
 }
