@@ -40,7 +40,7 @@ inline void ExtendedKalmanFusion::normalize_quaternion_() {
 
 inline std::array<float, 4 * 4> ExtendedKalmanFusion::omega_matrix_(const std::array<float, 3> &omega) const noexcept {
     return std::array<float, 16> {
-        0.0f,       -omega[0],  -omega[2],  -omega[3], 
+        0.0f,       -omega[0],  -omega[1],  -omega[2], 
         omega[0],   0.0f,       omega[2],   -omega[1], 
         omega[1],   -omega[2],  0.0f,       omega[0],
         omega[2],   omega[1],   -omega[0],  0.0f,
