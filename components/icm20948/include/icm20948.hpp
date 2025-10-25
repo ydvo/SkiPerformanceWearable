@@ -5,9 +5,9 @@ struct AccelData {
     float x, y, z;
 };
 
-class LCM20948 {
+class ICM20948 {
 public:
-    LCM20948();
+    ICM20948();
     void initialize();
     AccelData getAcceleration();
 };

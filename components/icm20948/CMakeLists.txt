@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "src/lcm20948.cpp"
+    SRCS "src/icm20948.cpp"
     INCLUDE_DIRS "include"
     REQUIRES common
 )
@@ -9,5 +9,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wall
     -Wextra
     -Werror
-    -Wpedantic
 )

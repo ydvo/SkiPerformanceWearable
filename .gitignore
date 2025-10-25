@@ -8,3 +8,6 @@ build/
 .\#*
 
 *.dSYM
+
+# ignore compile flags
+compile_commands.json

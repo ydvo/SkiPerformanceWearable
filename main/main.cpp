@@ -2,7 +2,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 
-#include "lcm20948.hpp"
+#include "icm20948.hpp"
 #include "force_sensor.hpp"
 #include "bluetooth_manager.hpp"
 #include "sensor_fusion.hpp"
@@ -21,6 +21,10 @@ extern "C" void app_main() {
 
     // Main event loop
     while (true) {
+
+      ESP_LOGI("test", "looping!");
+      vTaskDelay(pdMS_TO_TICKS(100));  // allow other tasks & WDT feed
+                                 //
         // auto accel = imu.getAcceleration();
         // auto forceVal = force.readForce();
         // auto fused = fusion.compute(accel, forceVal);
