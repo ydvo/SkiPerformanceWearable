@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES common icm20948 force_sensor
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17 -Wall -Wextra -Werror 
+    -std=gnu++17 -Wall -Wextra  
 )

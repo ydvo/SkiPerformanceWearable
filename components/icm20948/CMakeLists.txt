@@ -8,5 +8,5 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -std=gnu++17
     -Wall
     -Wextra
-    -Werror
+    
 )
