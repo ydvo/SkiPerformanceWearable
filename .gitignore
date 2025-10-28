@@ -8,3 +8,8 @@ build/
 .\#*
 
 *.dSYM
+.cache
+
+# ignore compile flags and clangd cfg
+compile_commands.json
+.clangd

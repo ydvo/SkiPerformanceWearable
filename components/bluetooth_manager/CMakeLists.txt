@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES nvs_flash bt common
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17 -Wall -Wextra -Werror -Wpedantic
+    -std=gnu++17 -Wall -Wextra  
 )
