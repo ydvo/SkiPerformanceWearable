@@ -56,8 +56,11 @@ esp_err_t I2C::init_device(uint8_t device_addr, uint32_t freq) {
   esp_err_t ret = i2c_master_bus_add_device(bus_handle_, &dev_cfg, &dev_handle);
 
   if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Device 0x%02X successfully initialized with freq %d", device_addr, freq);
     // add device to cache
     devices_.push_back({device_addr, freq, dev_handle});
+  } else {
+    ESP_LOGE(TAG, "Error initializing device 0x%02X", device_addr);
   }
 
   return ret;
@@ -84,6 +87,12 @@ esp_err_t I2C::reg_write(uint8_t device_addr, uint8_t reg, const uint8_t *data, 
 
   // get device handle
   i2c_master_dev_handle_t dev_handle = get_device_handle(device_addr);
+
+  // check that device handle exists
+  if (!dev_handle) {
+    ESP_LOGE(TAG, "Device 0x%02X not initialized", device_addr);
+    return ESP_ERR_INVALID_STATE;
+  }
 
   // prepare data
   i2c_master_transmit_multi_buffer_info_t tx_buffers[NUMBUFFERS] = {
@@ -120,6 +129,7 @@ esp_err_t I2C::reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_
 
   esp_err_t ret =
       i2c_master_transmit_receive(dev_handle, &reg, sizeof(reg), buffer, len, I2CTIMEOUT_MS);
+  // i2c_master_receive(dev_handle, buffer, len, I2CTIMEOUT_MS);
 
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "I2C read failed from 0x%02X: %s", device_addr, esp_err_to_name(ret));

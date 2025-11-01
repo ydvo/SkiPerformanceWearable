@@ -7,7 +7,6 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "hal/gpio_types.h"
-#include "soc/gpio_num.h"
 
 namespace Common {
 
@@ -18,7 +17,7 @@ static const char *TAG = "GPIO";
  *    - Pin number
  *    - GPIO mode ( Input or Output )
  */
-GPIO::GPIO(gpio_num_t pin, Direction dir, Pull pull, bool initial_level) : pin_(pin) {
+GPIO::GPIO(gpio_num_t pin, Direction dir, bool initial_level, Pull pull) : pin_(pin) {
   ESP_LOGI(TAG, "Configuring GPIO %d", pin_);
 
   // configure pin with default no interupts or pull up/down

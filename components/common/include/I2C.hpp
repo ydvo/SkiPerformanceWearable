@@ -10,10 +10,9 @@
 
 namespace Common {
 // constants
-constexpr int ICM20948_I2C_HZ{400000};
 constexpr uint8_t NUMBUFFERS{2};
 constexpr uint8_t BYTELENGTH{1};
-constexpr uint32_t I2CTIMEOUT_MS{1000};
+constexpr uint32_t I2CTIMEOUT_MS{100};
 
 struct I2CDevice {
   uint8_t address;

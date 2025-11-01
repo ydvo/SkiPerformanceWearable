@@ -5,7 +5,6 @@
 #pragma once
 #include "driver/gpio.h"
 #include "esp_err.h"
-#include "soc/gpio_num.h"
 
 namespace Common {
 
@@ -29,8 +28,8 @@ public:
     INTERRUPT_ANY_EDGE = GPIO_INTR_ANYEDGE
   };
 
-  explicit GPIO(gpio_num_t pin, Direction dir = INPUT, Pull pull = NONE,
-                bool initial_level = false);
+  explicit GPIO(gpio_num_t pin, Direction dir = INPUT, bool initial_level = false,
+                Pull pull = NONE);
   ~GPIO();
 
   /* setLevel
