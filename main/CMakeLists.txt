@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
-    REQUIRES icm20948 force_sensor bluetooth_manager sensor_fusion common log
+    REQUIRES icm20948 force_sensor bluetooth_manager sensor_fusion common log led 
 )
 
 # Stricter compiler flags for better C++
