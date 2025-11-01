@@ -10,10 +10,9 @@
 
 namespace Common {
 // constants
-constexpr int ICM20948_I2C_HZ{400000};
 constexpr uint8_t NUMBUFFERS{2};
 constexpr uint8_t BYTELENGTH{1};
-constexpr uint32_t I2CTIMEOUT_MS{1000};
+constexpr uint32_t I2CTIMEOUT_MS{100};
 
 struct I2CDevice {
   uint8_t address;
@@ -59,8 +58,8 @@ public:
   esp_err_t reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_t len);
 
 private:
-  i2c_master_bus_handle_t bus_handle; // master handle for i2c
-  std::vector<I2CDevice> devices;
+  i2c_master_bus_handle_t bus_handle_; // master handle for i2c
+  std::vector<I2CDevice> devices_;
 
   /* get_device_handle
    *  - retrieves device handle from stored devices
