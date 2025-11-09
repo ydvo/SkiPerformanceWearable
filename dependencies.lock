@@ -1,0 +1,142 @@
+dependencies:
+  espp/base_component:
+    component_hash: 4eb622f2705843fc76215d51d834ee7297522e883378e706a998d4fa6e49f231
+    dependencies:
+    - name: espp/logger
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espp/base_peripheral:
+    component_hash: d852ab634677571e03f7ab3e871260601c33d46b00c59c56f1361a764734fff6
+    dependencies:
+    - name: espp/base_component
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espp/filters:
+    component_hash: 4a1fcc942298babc57c12918237e7058658ac31af708fb214e3fea4682561809
+    dependencies:
+    - name: espp/format
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espp/math
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espressif/esp-dsp
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.6.4'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.30
+  espp/format:
+    component_hash: a36e56d8620d28997f37a41f005bd0af70ccf025f38320738f148e2c9579f2f1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espp/icm20948:
+    component_hash: 288e0a3e5dc80e60910c84f43af48a03b0e00a2171112716f805bbae4f5db789
+    dependencies:
+    - name: espp/base_peripheral
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espp/math
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espp/utils
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.30
+  espp/logger:
+    component_hash: 8e6fc4cb3ff9feabd726a5c6fa6465b3fafc704b7c8b283232f9bf98fa517bd8
+    dependencies:
+    - name: espp/format
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espp/math:
+    component_hash: 9fff8c6bcf2db4a715272a211a7f39738f36cad4f7bba90d03ef86429bce7fd8
+    dependencies:
+    - name: espp/format
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espp/utils:
+    component_hash: d5b1c58393f34971d49e1fbd00e4429e6653d10b8ae0dc66587f8521875da723
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.30
+  espressif/esp-dsp:
+    component_hash: 42dce32d46ac93dc11f60d368e29a830e9661c7345d794b8a45c343479cae636
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.7.0
+  idf:
+    source:
+      type: idf
+    version: 6.0.0
+direct_dependencies:
+- espp/filters
+- espp/icm20948
+- idf
+manifest_hash: 4bddb5e73a7864dc5ff0930beddb31bceb91f7819105b6621249f904038f2011
+target: esp32s3
+version: 2.0.0

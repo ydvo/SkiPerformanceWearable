@@ -1,0 +1,29 @@
+dependencies:
+  espp/format: '>=1.0'
+  espp/math: '>=1.0'
+  espressif/esp-dsp:
+    version: '>=1.6.4'
+  idf:
+    version: '>=5.0'
+description: Filter component for ESP-IDF
+documentation: https://esp-cpp.github.io/espp/filters/index.html
+license: MIT
+maintainers:
+- William Emfinger <waemfinger@gmail.com>
+repository: git://github.com/esp-cpp/espp.git
+repository_info:
+  commit_sha: 46e6bf33f56be7f298e80c2946f11dd80ef961c7
+  path: components/filters
+tags:
+- cpp
+- Component
+- Filter
+- Butterworth
+- Complementary
+- Kalman
+- Lowpass
+- Madgwick
+- SoS
+- Transfer
+url: https://github.com/esp-cpp/espp/tree/main/components/filters
+version: 1.0.30
