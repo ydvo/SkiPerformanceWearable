@@ -5,7 +5,6 @@
 #pragma once
 #include "driver/i2c_master.h"
 #include "driver/i2c_types.h"
-#include <cstdint>
 #include <vector>
 
 namespace Common {
@@ -56,6 +55,16 @@ public:
    *    - Ensure device is initiliazed before
    */
   esp_err_t reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_t len);
+
+  /* write
+   *  - I2C write matching ESPP interface
+   */
+  bool write(uint8_t device_addr, const uint8_t *data, size_t len);
+
+  /* read
+   *  - I2C write matching ESPP interface
+   */
+  bool read(uint8_t device_addr, uint8_t *data, size_t len);
 
 private:
   i2c_master_bus_handle_t bus_handle_; // master handle for i2c

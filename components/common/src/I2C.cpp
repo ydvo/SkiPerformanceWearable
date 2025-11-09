@@ -3,8 +3,6 @@
 #include "driver/i2c_types.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include <cstddef>
-#include <cstring>
 
 /* Implementation */
 namespace Common {
@@ -137,6 +135,26 @@ esp_err_t I2C::reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_
     ESP_LOGD(TAG, "I2C read from 0x%02X successful", device_addr);
 
   return ret;
+}
+
+// ESPP-compatible write callback
+bool I2C::write(uint8_t device_addr, const uint8_t *data, size_t len) {
+  if (len < 1)
+    return false; // need at least 1 byte for register
+  uint8_t reg = data[0];
+  const uint8_t *payload = data + 1;
+  size_t payload_len = len - 1;
+  return reg_write(device_addr, reg, payload, payload_len) == ESP_OK;
+}
+
+// ESPP-compatible read callback
+bool I2C::read(uint8_t device_addr, uint8_t *data, size_t len) {
+  if (len < 1)
+    return false; // first byte is register
+  uint8_t reg = data[0];
+  uint8_t *payload = data + 1;
+  size_t payload_len = len - 1;
+  return reg_read(device_addr, reg, payload, payload_len) == ESP_OK;
 }
 
 } // namespace Common
