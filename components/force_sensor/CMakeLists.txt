@@ -5,5 +5,5 @@ idf_component_register(
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17 -Wall -Wextra  -Wpedantic
+    -Wall -Wextra  -Wpedantic
 )

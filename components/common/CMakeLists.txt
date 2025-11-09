@@ -4,5 +4,5 @@ idf_component_register(
   REQUIRES esp_driver_i2c esp_driver_gpio
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17 -Wall -Wextra  
+    -Wall -Wextra  
 )
