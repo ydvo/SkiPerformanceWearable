@@ -137,24 +137,60 @@ esp_err_t I2C::reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_
   return ret;
 }
 
-// ESPP-compatible write callback
-bool I2C::write(uint8_t device_addr, const uint8_t *data, size_t len) {
-  if (len < 1)
-    return false; // need at least 1 byte for register
-  uint8_t reg = data[0];
-  const uint8_t *payload = data + 1;
-  size_t payload_len = len - 1;
-  return reg_write(device_addr, reg, payload, payload_len) == ESP_OK;
+/* write_raw
+ *  - ESPP-compatible write callback
+ *  - Sends raw data to the device without specifying a register
+ */
+bool I2C::write_raw(uint8_t addr, const uint8_t *data, size_t len) {
+
+  // get device handle
+  i2c_master_dev_handle_t dev_handle = get_device_handle(addr);
+
+  // check that device handle exists
+  if (!dev_handle) {
+    ESP_LOGE(TAG, "Device 0x%02X not initialized", addr);
+    return false;
+  }
+
+  // transmit data
+  esp_err_t ret = i2c_master_transmit(dev_handle, data, len, I2CTIMEOUT_MS);
+
+  // check for success
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "I2C raw write to 0x%02X failed: %s", addr, esp_err_to_name(ret));
+    return false;
+  }
+
+  ESP_LOGD(TAG, "I2C raw write to 0x%02X successful", addr);
+  return true;
 }
 
-// ESPP-compatible read callback
-bool I2C::read(uint8_t device_addr, uint8_t *data, size_t len) {
-  if (len < 1)
-    return false; // first byte is register
-  uint8_t reg = data[0];
-  uint8_t *payload = data + 1;
-  size_t payload_len = len - 1;
-  return reg_read(device_addr, reg, payload, payload_len) == ESP_OK;
+/* read_raw
+ *  - ESPP-compatible read callback
+ *  - Reads raw data from the device without specifying a register
+ */
+bool I2C::read_raw(uint8_t addr, uint8_t *data, size_t len) {
+
+  // get device handle
+  i2c_master_dev_handle_t dev_handle = get_device_handle(addr);
+
+  // check that device handle exists
+  if (!dev_handle) {
+    ESP_LOGE(TAG, "Device 0x%02X not initialized", addr);
+    return false;
+  }
+
+  // receive data
+  esp_err_t ret = i2c_master_receive(dev_handle, data, len, I2CTIMEOUT_MS);
+
+  // check for success
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "I2C raw read from 0x%02X failed: %s", addr, esp_err_to_name(ret));
+    return false;
+  }
+
+  ESP_LOGD(TAG, "I2C raw read from 0x%02X successful", addr);
+  return true;
 }
 
 } // namespace Common

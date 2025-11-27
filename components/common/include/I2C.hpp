@@ -56,15 +56,17 @@ public:
    */
   esp_err_t reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_t len);
 
-  /* write
-   *  - I2C write matching ESPP interface
+  /* write_raw
+   *  - ESPP-compatible write callback
+   *  - Sends raw data to the device without specifying a register
    */
-  bool write(uint8_t device_addr, const uint8_t *data, size_t len);
+  bool write_raw(uint8_t addr, const uint8_t *data, size_t len);
 
-  /* read
-   *  - I2C write matching ESPP interface
+  /* read_raw
+   *  - ESPP-compatible read callback
+   *  - Reads raw data from the device without specifying a register
    */
-  bool read(uint8_t device_addr, uint8_t *data, size_t len);
+  bool read_raw(uint8_t addr, uint8_t *data, size_t len);
 
 private:
   i2c_master_bus_handle_t bus_handle_; // master handle for i2c
