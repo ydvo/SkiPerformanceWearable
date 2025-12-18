@@ -1,0 +1,13 @@
+[project]
+name = "python"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "filterpy>=1.4.5",
+    "imufusion>=1.2.9",
+    "matplotlib>=3.10.7",
+    "numpy>=2.3.4",
+    "stonesoup>=1.8",
+]
