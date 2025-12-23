@@ -4,4 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "imufusion>=1.2.11",
+    "matplotlib>=3.9.4",
+    "pandas>=2.3.3",
+]
