@@ -67,8 +67,8 @@ acc = sim["accel"] / 9.81
 mag = sim["mag"]
 
 for index in range(len(t)):
-    # ahrs.update(gyro[index], acc[index], mag[index], 1 / sim["Fs"])
-    ahrs.update_no_magnetometer(gyro[index], acc[index], 1 / sim["Fs"])
+    ahrs.update(gyro[index], acc[index], mag[index], 1 / sim["Fs"])
+    #ahrs.update_no_magnetometer(gyro[index], acc[index], 1 / sim["Fs"])
     euler[index] = ahrs.quaternion.to_euler()
 
 # Plot Euler angles

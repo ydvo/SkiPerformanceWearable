@@ -21,9 +21,6 @@ Magnetometer:
     Hard iron and soft iron must be calibrated for environment. 
 """
 
-
-
-
 cfg = {
     "Fs": 200,
     "T": 30,

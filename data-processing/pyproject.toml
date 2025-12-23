@@ -3,9 +3,10 @@ name = "data-processing"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.14"
 dependencies = [
+    "ahrs>=0.4.0",
     "imufusion>=1.2.11",
-    "matplotlib>=3.9.4",
-    "pandas>=2.3.3",
+    "matplotlib>=3.10.8",
+    "scipy>=1.16.3",
 ]
