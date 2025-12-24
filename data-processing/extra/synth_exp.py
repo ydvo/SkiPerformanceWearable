@@ -1,5 +1,5 @@
 import numpy as np
-from synth_imu_9dof import synth_imu_9dof
+from synth import synth_imu_9dof
 
 """
 ICM20948 Parameters

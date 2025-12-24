@@ -1,7 +1,7 @@
 import imufusion
 import matplotlib.pyplot as plt
 import numpy as np
-from synth_imu_9dof import synth_imu_9dof
+from synth import synth_imu_9dof
 
 cfg = {
     "Fs": 200,
