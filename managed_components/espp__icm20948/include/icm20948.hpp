@@ -820,7 +820,7 @@ protected:
   Value gravity_vector_{};
   filter_fn orientation_filter_{nullptr};
   ImuConfig imu_config_{}; ///< IMU configuration
-}; // class Icm20948
+};                         // class Icm20948
 } // namespace espp
 
 // explicit template instantiation

@@ -7,11 +7,11 @@ maintainers:
 - William Emfinger <waemfinger@gmail.com>
 repository: git://github.com/esp-cpp/espp.git
 repository_info:
-  commit_sha: 46e6bf33f56be7f298e80c2946f11dd80ef961c7
+  commit_sha: 35428fbc3d604554f52d16d8bac712a244e65c59
   path: components/utils
 tags:
 - cpp
 - Component
 - Utilities
 url: https://github.com/esp-cpp/espp/tree/main/components/utils
-version: 1.0.30
+version: 1.0.33
