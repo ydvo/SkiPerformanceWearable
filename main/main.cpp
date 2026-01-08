@@ -1,64 +1,49 @@
-#include "GPIO.hpp"
-#include "I2C.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include "GPIO.hpp"
-#include "bluetooth_manager.hpp"
-#include "force_sensor.hpp"
 #include "hal/i2c_types.h"
-#include "icm20948.hpp"
-#include "led.hpp"
-#include "sensor_fusion.hpp"
 #include "soc/gpio_num.h"
-#include <cstdio>
+#include "i2c.hpp"
+#include "logger.hpp"
 
-// led
-LED::led red_led = LED::led(LED::RED_LED);
+#include <cstdio>
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
-constexpr int ICM20948_I2C_HZ{400000};
+constexpr uint32_t ICM20948_I2C_HZ{400000};
 
 extern "C" void app_main() {
   // enable QT Stemma Port
-  Common::GPIO stemma_qt_power = Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, 1);
+  gpio_num_t vcc = GPIO_NUM_7;
+  gpio_set_direction(vcc, GPIO_MODE_OUTPUT);
+  gpio_set_level(vcc, 1);
 
-  gpio_num_t sda{GPIO_NUM_3};
-  gpio_num_t scl{GPIO_NUM_4};
+  espp::Logger logger({.tag = "I2C", .level = espp::Logger::Verbosity::INFO});
+  logger.info("Starting");
 
   ESP_LOGI("MAIN", "Starting Ski Wearable...");
 
-  Common::I2C i2c(I2C_NUM_0, sda, scl);
+  espp::I2c i2c({
+    .port = I2C_NUM_0,
+    .sda_io_num = (gpio_num_t) GPIO_NUM_3,
+    .scl_io_num = (gpio_num_t) GPIO_NUM_4,
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
+    .scl_pullup_en = GPIO_PULLUP_ENABLE,
+  });
 
-  i2c.init_device(ICM20948_ADRESS, ICM20948_I2C_HZ);
+  std::vector<uint8_t> found_addresses;
+  for (uint8_t address = 1; address < 128; address++) {
+    if (i2c.probe_device(address)) {
+      logger.info("Found device at addresses: {}", address);
+      found_addresses.push_back(address);
+    }
+  }
 
-  // try read
-  uint8_t buffer = 0;
-  i2c.reg_read(ICM20948_ADRESS, 0x00, &buffer, 1);
-  printf("Who Am I: %d\n\r", buffer);
-
-  // ESP_LOGI("I2C_SCAN", "Scanning I2C bus...");
-  //
-  // for (uint8_t addr = 1; addr < 0x7F; ++addr) {
-  //   uint8_t data;
-  //   i2c.init_device(addr, ICM20948_I2C_HZ);
-  //   esp_err_t ret = i2c.reg_read(addr, 0x00, &data, 1); // try reading WHOAMI
-  //   if (ret == ESP_OK) {
-  //     ESP_LOGI("I2C_SCAN", "Device found at 0x%02X, WHOAMI=0x%02X", addr, data);
-  //   }
-  // }
-  //
-  // ESP_LOGI("I2C_SCAN", "Scan complete");
+  logger.info("Found devices at addresses: {::#02x}", found_addresses);
 
   // Main event loop
   while (true) {
-
-    red_led.turn_on();
-    vTaskDelay(pdMS_TO_TICKS(1000)); // allow other tasks & WDT feed
-
-    red_led.turn_off();
-    vTaskDelay(pdMS_TO_TICKS(1000)); // allow other tasks & WDT feed
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(1s);
   }
 }
