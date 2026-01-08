@@ -5,6 +5,7 @@
 #pragma once
 #include "driver/i2c_master.h"
 #include "driver/i2c_types.h"
+#include <system_error>
 #include <vector>
 
 namespace Common {
@@ -56,17 +57,12 @@ public:
    */
   esp_err_t reg_read(uint8_t device_addr, uint8_t reg, uint8_t *buffer, size_t len);
 
-  /* write_raw
-   *  - ESPP-compatible write callback
-   *  - Sends raw data to the device without specifying a register
-   */
-  bool write_raw(uint8_t addr, const uint8_t *data, size_t len);
+  /* Adapter functions for ESPP components */
+  bool espp_write(uint8_t device_addr, uint8_t reg_addr, const uint8_t *data, size_t len,
+                  std::error_code &ec);
 
-  /* read_raw
-   *  - ESPP-compatible read callback
-   *  - Reads raw data from the device without specifying a register
-   */
-  bool read_raw(uint8_t addr, uint8_t *data, size_t len);
+  bool espp_read(uint8_t device_addr, uint8_t reg_addr, uint8_t *data, size_t len,
+                 std::error_code &ec);
 
 private:
   i2c_master_bus_handle_t bus_handle_; // master handle for i2c

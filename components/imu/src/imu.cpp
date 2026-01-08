@@ -6,33 +6,35 @@ namespace SENSORS {
 Imu::Imu(Common::I2C &i2c) : Imu(make_default_config(i2c)) {}
 
 Imu::Imu(const Config &config)
-    : imu_({.device_address = config.device_address,
-            .write = config.write,
-            .read = config.read,
-            .imu_config = config.imu_config,
-            .orientation_filter = nullptr, // we handle Madgwick ourselves
-            .auto_init = config.auto_init}),
+    : imu_(espp::Icm20948<espp::icm20948::Interface::I2C>::Config{
+          config.device_address, config.write, config.read, config.imu_config,
+          nullptr, // orientation_filter
+          config.auto_init}),
       madgwick_(config.madgwick_beta) {}
 
 // Construct default config from i2c
 Imu::Config Imu::make_default_config(Common::I2C &i2c) {
-  return {
-      .device_address = ICM20948_ADRESS,
-      .write = [&i2c](uint8_t addr, const uint8_t *data,
-                      size_t len) { return i2c.write_raw(addr, data, len); },
-      .read = [&i2c](uint8_t addr, uint8_t *data,
-                     size_t len) { return i2c.read_raw(addr, data, len); },
-      .imu_config =
-          {
-              .accelerometer_range = ACCELEROMETER_RANGE,
-              .gyroscope_range = GYROSCOPE_RANGE,
-              .accelerometer_sample_rate_divider = 9,
-              .gyroscope_sample_rate_divider = 9,
-              .magnetometer_mode = MAGNETOMETER_MODE,
+  uint8_t dev_addr = ICM20948_ADDRESS;
+
+  return {.device_address = dev_addr,
+          .write = [&i2c](uint8_t reg, const uint8_t *data, size_t len) -> bool {
+            std::error_code ec;
+            return i2c.espp_write(ICM20948_ADDRESS, reg, data, len, ec);
           },
-      .madgwick_beta = MADGWICK_BETA,
-      .auto_init = true,
-  };
+          .read = [&i2c](uint8_t reg, uint8_t *data, size_t len) -> bool {
+            std::error_code ec;
+            return i2c.espp_read(ICM20948_ADDRESS, reg, data, len, ec);
+          },
+          .imu_config =
+              {
+                  .accelerometer_range = ACCELEROMETER_RANGE,
+                  .gyroscope_range = GYROSCOPE_RANGE,
+                  .accelerometer_sample_rate_divider = 9,
+                  .gyroscope_sample_rate_divider = 9,
+                  .magnetometer_mode = MAGNETOMETER_MODE,
+              },
+          .madgwick_beta = MADGWICK_BETA,
+          .auto_init = true};
 }
 
 // whoami

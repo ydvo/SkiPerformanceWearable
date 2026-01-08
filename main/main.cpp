@@ -6,6 +6,7 @@
 #include "I2C.hpp"
 #include "imu.hpp"
 #include "led.hpp"
+#include <cstdint>
 
 using namespace SENSORS;
 
@@ -30,11 +31,11 @@ extern "C" void app_main() {
   Common::I2C i2c(I2C_NUM_0, sda, scl);
 
   // init icm20948
-  i2c.init_device(ICM20948_ADRESS, ICM20948_I2C_HZ);
+  i2c.init_device(ICM20948_ADDRESS, ICM20948_I2C_HZ);
 
   // try read
   uint8_t buffer = 0;
-  if (i2c.reg_read(ICM20948_ADRESS, 0x00, &buffer, 1) == ESP_OK) {
+  if (i2c.reg_read(ICM20948_ADDRESS, 0x00, &buffer, 1) == ESP_OK) {
     printf("Who Am I: %x\n\r", buffer);
   }
 
@@ -58,6 +59,12 @@ extern "C" void app_main() {
   ESP_LOGI(TAG, "IMU initialized successfully");
 
   red_led.turn_on();
+
+  if (uint8_t addr = imu.get_whoami()) {
+    printf("Found at %x\n\r", addr);
+  } else {
+    printf("Fail\n\r");
+  }
 
   /* Main event loop */
   while (true) {

@@ -5,12 +5,14 @@
 #include "icm20948_detail.hpp"
 #include "madgwick_filter.hpp"
 #include <cstdint>
+#include <functional>
+#include <system_error>
 
 namespace SENSORS {
 /* Constants */
 
 // I2C
-constexpr uint8_t ICM20948_ADRESS{0x69};
+constexpr uint8_t ICM20948_ADDRESS{0x69};
 constexpr int ICM20948_I2C_HZ{400000};
 
 // Sensor Ranges
@@ -44,13 +46,14 @@ class Imu {
 public:
   // imu configuration parameters
   struct Config {
-    uint8_t device_address;                                      // i2c address
-    std::function<bool(uint8_t, const uint8_t *, size_t)> write; // i2c write function
-    std::function<bool(uint8_t, uint8_t *, size_t)> read;        // i2c read function
+    uint8_t device_address; // I2C address
+
+    // Lambdas match ESPP ICM20948 signature exactly
+    std::function<bool(uint8_t reg, const uint8_t *data, size_t len)> write;
+    std::function<bool(uint8_t reg, uint8_t *data, size_t len)> read;
 
     espp::icm20948::ImuConfig imu_config;
-
-    float madgwick_beta = 0.1f; // default filter beta
+    float madgwick_beta = 0.1f;
     bool auto_init = true;
   };
 
