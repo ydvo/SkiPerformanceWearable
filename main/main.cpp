@@ -1,17 +1,20 @@
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal/i2c_types.h"
+#include "soc/gpio_num.h"
 
-#include "GPIO.hpp"
-#include "I2C.hpp"
-#include "imu.hpp"
-#include "led.hpp"
-#include <cstdint>
+#include "esp_log.h"
+#include "esp_err.h"
 
-using namespace SENSORS;
+#include "logger.hpp"
+#include "i2c.hpp"
+#include "icm20948.hpp"
 
-/* Constants */
-constexpr const char *TAG = "MAIN";
+#include <cstdio>
+
+// icm
+constexpr uint8_t ICM20948_ADRESS{0x69};
+constexpr uint32_t ICM20948_I2C_HZ{400000};
 
 // i2c pins
 constexpr gpio_num_t sda{GPIO_NUM_3};
@@ -19,58 +22,83 @@ constexpr gpio_num_t scl{GPIO_NUM_4};
 
 /* Main function */
 extern "C" void app_main() {
-  ESP_LOGI(TAG, "Starting Ski Wearable...");
+  using Imu = espp::Icm20948<espp::icm20948::Interface::I2C>; 
 
-  /* GPIO */
+  espp::Logger logger({.tag = "Ski-wearable module", .level = espp::Logger::Verbosity::INFO});
+  logger.info("Starting");
+
   // enable QT Stemma Port
-  Common::GPIO stemma_qt_power = Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, 1);
-  // led
-  LED::led red_led = LED::led(LED::RED_LED);
+  // TODO: Add proper error handling, abort for now. 
+  gpio_num_t vcc = GPIO_NUM_7;
+  ESP_ERROR_CHECK(gpio_set_direction(vcc, GPIO_MODE_OUTPUT));
+  ESP_ERROR_CHECK(gpio_set_level(vcc, 1));
 
-  /* I2C */
-  Common::I2C i2c(I2C_NUM_0, sda, scl);
+  static constexpr auto i2c_port {I2C_NUM_0}; 
+  static constexpr auto i2c_sda {GPIO_NUM_3};
+  static constexpr auto i2c_scl {GPIO_NUM_4}; 
+  
+  logger.info("Enabled QT Stemma Port");
+  logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
-  // init icm20948
-  i2c.init_device(ICM20948_ADDRESS, ICM20948_I2C_HZ);
+  espp::I2c i2c({
+    .port = i2c_port,
+    .sda_io_num = i2c_sda,
+    .scl_io_num = i2c_scl,
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
+    .scl_pullup_en = GPIO_PULLUP_ENABLE,
+  });
 
-  // try read
-  uint8_t buffer = 0;
-  if (i2c.reg_read(ICM20948_ADDRESS, 0x00, &buffer, 1) == ESP_OK) {
-    printf("Who Am I: %x\n\r", buffer);
+  logger.info("Scanning I2C devices"); 
+  std::vector<uint8_t> found_addresses;
+  for (uint8_t address = 1; address < 128; address++) {
+    if (i2c.probe_device(address)) {
+      found_addresses.push_back(address);
+    }
   }
+  logger.info("Found devices at addresses: {::#02x}", found_addresses);
 
-  /* I2C Scan */
-  // ESP_LOGI("I2C_SCAN", "Scanning I2C bus...");
-  //
-  // for (uint8_t addr = 1; addr < 0x7F; ++addr) {
-  //   uint8_t data;
-  //   i2c.init_device(addr, ICM20948_I2C_HZ);
-  //   esp_err_t ret = i2c.reg_read(addr, 0x00, &data, 1); // try reading WHOAMI
-  //   if (ret == ESP_OK) {
-  //     ESP_LOGI("I2C_SCAN", "Device found at 0x%02X, WHOAMI=0x%02X", addr, data);
-  //   }
-  // }
-  //
-  // ESP_LOGI("I2C_SCAN", "Scan complete");
+  static constexpr uint8_t imu_address {ICM20948_ADRESS};
+  Imu::Config imu_config {
+    .device_address = imu_address, 
+    .write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), 
+    .read = std::bind(&espp::I2c::read, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), 
+    .imu_config = {
+      .accelerometer_range = Imu::AccelerometerRange::RANGE_2G, 
+      .gyroscope_range = Imu::GyroscopeRange::RANGE_250DPS, 
+      .accelerometer_sample_rate_divider = 9, // 1kHz / (1 + 9) = 100Hz
+      .gyroscope_sample_rate_divider = 9,     // 1kHz / (1 + 9) = 100Hz
+      .magnetometer_mode = Imu::MagnetometerMode::CONTINUOUS_MODE_100_HZ
+    }
+  }; 
 
-  /* IMU */
-  // init device
-  Imu imu(i2c);
-  ESP_LOGI(TAG, "IMU initialized successfully");
+  logger.info("Creating IMU"); 
+  Imu imu {imu_config}; 
 
-  red_led.turn_on();
-
-  if (uint8_t addr = imu.get_whoami()) {
-    printf("Found at %x\n\r", addr);
-  } else {
-    printf("Fail\n\r");
-  }
-
-  /* Main event loop */
+  using namespace std::chrono_literals;
+  // Main event loop
   while (true) {
-    // vTaskDelay(pdMS_TO_TICKS(1000)); // allow other tasks & WDT feed
-    //
-    // red_led.turn_off();
-    // vTaskDelay(pdMS_TO_TICKS(1000)); // allow other tasks & WDT feed
+    auto now {std::chrono::system_clock::now()}; 
+    static auto t0 {now}; 
+    auto t1 {now}; 
+    std::chrono::duration<float> dt_ = t1 - t0;
+    float dt = dt_.count(); 
+    t0 = t1;
+    logger.info("Elapsed time in float seconds: {}", dt);
+
+    std::error_code ec;
+    // update the imu data
+    if (!imu.update(dt, ec)) {
+      logger.error("Failed to update IMU: {}", ec.message());
+    }
+
+    auto accel = imu.get_accelerometer();
+    auto gyro = imu.get_gyroscope();
+    auto mag = imu.get_magnetometer();
+
+    logger.info("Imu Acceleration: < {} , {} , {} > ", accel.x, accel.y, accel.z);
+    logger.info("Imu Gyroscope: < {} , {} , {} > ", gyro.x, gyro.y, gyro.z);
+    logger.info("Imu Magnetometer: < {} , {} , {} > ", mag.x, mag.y, mag.z);
+
+    std::this_thread::sleep_for(1s);
   }
 }
