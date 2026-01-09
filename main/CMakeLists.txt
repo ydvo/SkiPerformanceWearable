@@ -6,7 +6,7 @@ idf_component_register(
 
 # Stricter compiler flags for better C++
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17
+    -std=gnu++20
     -Wall
     -Wextra
 )

@@ -15,6 +15,6 @@
     "--query-driver=**",
     "--compile-commands-dir=/Users/work/Documents/college/ENGS89/ski-wearable/build"
   ],
-  "idf.port": "/dev/tty.usbmodem1101",
+  "idf.port": "/dev/tty.usbmodem2101",
   "idf.flashType": "UART"
 }
