@@ -16,3 +16,4 @@ dependencies:
   #   public: true
   espp/i2c: ^1.0.33
   espp/icm20948: ^1.0.33
+  espp/filters: '*'
