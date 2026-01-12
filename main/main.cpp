@@ -87,6 +87,8 @@ void initSystem() {
   }); 
 
   spi_flash.init(); 
+
+  spi_flash.erase();
 }
 
 /*

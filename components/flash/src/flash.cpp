@@ -1,6 +1,7 @@
 #include "flash.hpp"
 
 #include "esp_flash.h"
+#include "spi_flash_chip_driver.h"
 #include "esp_flash_spi_init.h"
 #include "driver/spi_common.h"
 #include "esp_log.h"
@@ -49,5 +50,56 @@ namespace STORAGE {
     initialized_ = true; 
 
     return ESP_OK; 
+  }
+
+  esp_err_t SpiFlashDevice::check_bounds(const uint32_t addr, size_t len) const noexcept {
+    if (!initialized_ || flash_dev_ != nullptr || addr + len > flash_dev_->size) {
+      return ESP_ERR_INVALID_STATE; 
+    }
+
+    return ESP_OK; 
+  }
+
+  esp_err_t SpiFlashDevice::read(const uint32_t addr, void *dst, size_t len) {
+    if (!initialized_) return ESP_ERR_INVALID_STATE; 
+
+    ESP_RETURN_ON_ERROR(
+      check_bounds(addr, len), 
+      TAG, "read outside of bounds"
+    ); 
+    
+    return esp_flash_read(flash_dev_, dst, addr, len); 
+  }
+
+  esp_err_t SpiFlashDevice::write(const uint32_t addr, void *src, size_t len) {
+    if (!initialized_) return ESP_ERR_INVALID_STATE; 
+
+    ESP_RETURN_ON_ERROR(
+      check_bounds(addr, len), 
+      TAG, "write outside of bounds"
+    ); 
+
+    return esp_flash_write(flash_dev_, src, addr, len); 
+  }
+
+  esp_err_t SpiFlashDevice::erase(){
+    if (!initialized_) return ESP_ERR_INVALID_STATE;
+
+    return esp_flash_erase_chip(flash_dev_); 
+  }
+
+  esp_err_t SpiFlashDevice::erase_region(const uint32_t addr, size_t len) {
+    if (!initialized_) return ESP_ERR_INVALID_STATE; 
+    
+    if (addr % flash_dev_->chip_drv->sector_size != 0 || len % flash_dev_->chip_drv->sector_size != 0) {
+      return ESP_ERR_INVALID_ARG; 
+    }
+
+    ESP_RETURN_ON_ERROR(
+      check_bounds(addr, len), 
+      TAG, "erase outside of bounds"
+    );
+
+    return esp_flash_erase_region(flash_dev_, addr, len); 
   }
 }
