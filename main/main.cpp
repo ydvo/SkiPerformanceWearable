@@ -79,12 +79,14 @@ void initSystem() {
 
   red_led.turn_on();
 
-  STORAGE::SpiFlash spi_flash ({
+  STORAGE::SpiFlashDevice spi_flash ({
     .sck_port = flash_spi_sck,
     .mosi_port = flash_spi_mosi,
     .miso_port = flash_spi_miso,
     .spi_cs_port = flash_spi_cs,
   }); 
+
+  spi_flash.init(); 
 }
 
 /*
