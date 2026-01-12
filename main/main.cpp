@@ -10,6 +10,7 @@
 #include "icm20948.hpp"
 #include "led.hpp"
 #include "logger.hpp"
+#include "flash.hpp"
 
 #include <cstdio>
 
@@ -21,6 +22,12 @@ constexpr uint32_t ICM20948_I2C_HZ{400000};
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
+
+// flash spi pins
+static constexpr auto flash_spi_sck {GPIO_NUM_12}; 
+static constexpr auto flash_spi_mosi {GPIO_NUM_11}; 
+static constexpr auto flash_spi_miso {GPIO_NUM_13}; 
+static constexpr auto flash_spi_cs {GPIO_NUM_10}; 
 
 // Logging
 espp::Logger logger({.tag = "Ski-wearable module", .level = espp::Logger::Verbosity::INFO});
@@ -71,6 +78,13 @@ void initSystem() {
   logger.info("Creating IMU");
 
   red_led.turn_on();
+
+  STORAGE::SpiFlash spi_flash ({
+    .sck_port = flash_spi_sck,
+    .mosi_port = flash_spi_mosi,
+    .miso_port = flash_spi_miso,
+    .spi_cs_port = flash_spi_cs,
+  }); 
 }
 
 /*
