@@ -11,8 +11,6 @@ managed_components/
 *.dSYM
 .cache
 
-.vscode
-
 # ignore compile flags and clangd cfg
 compile_commands.json
 .clangd
