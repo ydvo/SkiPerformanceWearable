@@ -23,20 +23,23 @@ namespace STORAGE {
       .freq_mhz = 20, 
     }; 
 
-    esp_flash_t *flash_ptr = &flash_; 
+    esp_flash_t *flash_ptr = nullptr; 
 
     ESP_RETURN_ON_ERROR(
       spi_bus_add_flash_device(&flash_ptr, &flash_dev_config), 
       TAG, "add flash device failed"
-    ); 
+    );
+
     ESP_RETURN_ON_ERROR(
-      esp_flash_init(&flash_), 
+      esp_flash_init(flash_ptr), 
       TAG, "flash initialization failed"
     );
-    ESP_LOGI("SPI_FLASH_DEVICE", "Initialized SPI Flash Device (id: 0x%x, sz: %d)", flash_.chip_id, flash_.size); 
 
+    flash_ = *flash_ptr; 
     chip_ = flash_.chip_drv; 
     initialized_ = true; 
+
+    ESP_LOGI("SPI_FLASH_DEVICE", "Initialized SPI Flash Device (id: 0x%x, sz: %d)", flash_.chip_id, flash_.size); 
 
     return ESP_OK; 
   }
