@@ -2,8 +2,10 @@
 #include "freertos/task.h"
 #include "hal/i2c_types.h"
 #include "soc/gpio_num.h"
+#include "driver/spi_common.h"
 
 #include "esp_err.h"
+#include "esp_check.h"
 
 #include "GPIO.hpp"
 #include "i2c.hpp"
@@ -23,10 +25,11 @@ constexpr i2c_port_t i2c_port{I2C_NUM_0};
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 
-// flash spi pins
-static constexpr auto flash_spi_sck {GPIO_NUM_12}; 
-static constexpr auto flash_spi_mosi {GPIO_NUM_11}; 
-static constexpr auto flash_spi_miso {GPIO_NUM_13}; 
+// spi 2 pins
+static constexpr auto spi2_sck {GPIO_NUM_12}; 
+static constexpr auto spi2_mosi {GPIO_NUM_11}; 
+static constexpr auto spi2_miso {GPIO_NUM_13}; 
+
 static constexpr auto flash_spi_cs {GPIO_NUM_10}; 
 
 // Logging
@@ -79,16 +82,32 @@ void initSystem() {
 
   red_led.turn_on();
 
+  spi_bus_config_t spi2_bus_config {
+    .mosi_io_num = spi2_mosi, 
+    .miso_io_num = spi2_miso, 
+    .sclk_io_num = spi2_sck,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1, 
+  }; 
+
+  if (spi_bus_initialize(SPI2_HOST, &spi2_bus_config, SPI_DMA_CH_AUTO) != ESP_OK){
+    logger.info("Failed to initialize SPI_2 bus. Terminating initialization."); 
+    return; 
+  }
+
   STORAGE::SpiFlashDevice spi_flash ({
-    .sck_port = flash_spi_sck,
-    .mosi_port = flash_spi_mosi,
-    .miso_port = flash_spi_miso,
-    .spi_cs_port = flash_spi_cs,
-  }); 
+    .host = SPI2_HOST,
+    .cs = flash_spi_cs
+  });
 
   spi_flash.init(); 
-
-  spi_flash.erase();
+  
+  uint32_t data {4};
+  if (spi_flash.read(0x0, &data, sizeof(data)) == ESP_OK) {
+    logger.info("Read the data: {:#x}", data); 
+  } else {
+    logger.info("Failed to read data"); 
+  }
 }
 
 /*
