@@ -39,7 +39,10 @@ namespace STORAGE {
     chip_ = flash_.chip_drv; 
     initialized_ = true; 
 
-    ESP_LOGI("SPI_FLASH_DEVICE", "Initialized SPI Flash Device (id: 0x%x, sz: %d)", flash_.chip_id, flash_.size); 
+    ESP_LOGI(
+      "SPI_FLASH_DEVICE", "Initialized SPI Flash Device (id: 0x%x, sz: %d, sector_sz: %d, page_size: %d)", 
+      flash_.chip_id, flash_.size, chip_->sector_size, chip_->page_size
+    ); 
 
     return ESP_OK; 
   }
