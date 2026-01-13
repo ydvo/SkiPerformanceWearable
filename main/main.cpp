@@ -13,6 +13,7 @@
 #include "led.hpp"
 #include "logger.hpp"
 #include "flash.hpp"
+#include "flash_log.hpp"
 
 #include <cstdio>
 
@@ -108,6 +109,11 @@ void initSystem() {
   } else {
     logger.info("Failed to read data"); 
   }
+
+  STORAGE::FlashLog<STORAGE::Payload> flash_log(
+    spi_flash, 
+    0x0
+  ); 
 }
 
 /*

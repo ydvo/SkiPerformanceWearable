@@ -24,7 +24,9 @@ namespace STORAGE {
   template <typename T>
   uint32_t FlashLog<T>::compute_crc(const Frame &frame) const {
     return esp_crc32_le(
-      0, reinterpret_cast<const uint8_t *> (&frame), offsetof(frame, crc)
-    )
+      0, reinterpret_cast<const uint8_t *> (&frame), offsetof(Frame, crc)
+    );
   }
+
+template class FlashLog<Payload>; 
 }

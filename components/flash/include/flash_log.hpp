@@ -3,7 +3,7 @@
 
 namespace STORAGE {
 
-constexpr uint32_t MAGIC = 0xDEADBEEF; 
+constexpr uint32_t MAGIC = 0xDEADBEEF;
 
 template <typename T>
 class FlashLog { 
@@ -16,7 +16,10 @@ public:
     uint32_t crc; 
   } __attribute__((packed));
 
-  FlashLog(STORAGE::SpiFlashDevice &dev, uint32_t base) noexcept;
+  static_assert(256 % sizeof(Frame) == 0, "frame size must divide page size");
+  static_assert(std::is_trivially_copyable_v<Frame>, "frame must be trivially copyable"); 
+
+  explicit FlashLog(STORAGE::SpiFlashDevice &dev, uint32_t base) noexcept;
   esp_err_t append(const T& sample);
 
 private: 
@@ -26,4 +29,11 @@ private:
 
   uint32_t compute_crc(const Frame &frame) const; 
 }; 
+
+struct Payload {
+  float w;
+  float x; 
+  float y; 
+  float z; 
+};
 }

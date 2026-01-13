@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "src/flash.cpp"
+    SRCS "src/flash.cpp" "src/flash_log.cpp"
     INCLUDE_DIRS "include"
     REQUIRES common spi_flash espp__logger esp_driver_spi
 )
