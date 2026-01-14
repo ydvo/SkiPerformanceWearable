@@ -38,12 +38,12 @@ espp::Logger logger({.tag = "Ski-wearable module", .level = espp::Logger::Verbos
 
 // I2C
 espp::I2c i2c({
-    .port = i2c_port,
-    .sda_io_num = i2c_sda,
-    .scl_io_num = i2c_scl,
-    .sda_pullup_en = GPIO_PULLUP_ENABLE,
-    .scl_pullup_en = GPIO_PULLUP_ENABLE,
-    .auto_init = false,
+  .port = i2c_port,
+  .sda_io_num = i2c_sda,
+  .scl_io_num = i2c_scl,
+  .sda_pullup_en = GPIO_PULLUP_ENABLE,
+  .scl_pullup_en = GPIO_PULLUP_ENABLE,
+  .auto_init = false,
 });
 
 /*
@@ -102,7 +102,7 @@ void initSystem() {
   });
 
   spi_flash.init(); 
-  
+
   uint32_t data {4};
   if (spi_flash.read(0x0, &data, sizeof(data)) == ESP_OK) {
     logger.info("Read the data: {:#x}", data); 
@@ -110,7 +110,7 @@ void initSystem() {
     logger.info("Failed to read data"); 
   }
 
-  STORAGE::FlashLog<STORAGE::Payload> flash_log(
+  STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
     spi_flash, 
     0x0
   ); 
