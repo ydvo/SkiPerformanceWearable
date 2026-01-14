@@ -81,6 +81,9 @@ void initSystem() {
   // init imu
   bool imu_initialized = imu.init();
   // ensure imu is configured correctly
+
+  vTaskDelay(pdMS_TO_TICKS(10)); // give imu time to startup before first i2c read
+
   uint8_t test = imu.get_whoami();
   if (test != 0xEA && !imu_initialized) {
     logger.error("Could not initialize imu");
@@ -98,7 +101,7 @@ void initSystem() {
 void mainLoop() {
   if (imu.update(dt)) {
     SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    logger.info("{} {} {} {}", quat.w, quat.x, quat.y, quat.z);
+    printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
   }
 }
 
