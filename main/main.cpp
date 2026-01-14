@@ -97,8 +97,8 @@ void initSystem() {
  */
 void mainLoop() {
   if (imu.update(dt)) {
-    SENSORS::Imu::Raw raw = imu.get_raw();
-    logger.info("a{} g{} m{}", raw.accel, raw.gyro, raw.mag);
+    SENSORS::Imu::Quaternion quat = imu.get_orientation();
+    logger.info("{} {} {} {}", quat.w, quat.x, quat.y, quat.z);
   }
 }
 
