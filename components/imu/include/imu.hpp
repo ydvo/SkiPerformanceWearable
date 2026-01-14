@@ -33,13 +33,13 @@ public:
   static constexpr float MADGWICK_BETA{0.1f}; // default filter beta
 
   /* Structs */
-  struct ImuValue {
+  struct Value {
     float roll{};
     float pitch{};
     float yaw{};
   };
 
-  struct ImuRaw {
+  struct Raw {
     espp::icm20948::Value accel{};
     espp::icm20948::Value gyro{};
     espp::icm20948::Value mag{};
@@ -53,6 +53,8 @@ public:
 
   explicit Imu(ICM::Config cfg);
 
+  // initialize
+  bool init();
   // whoami
   uint8_t get_whoami();
 
@@ -60,19 +62,19 @@ public:
   bool update(float dt);
 
   // Get filtered orientation (Madgwick)
-  ImuValue get_orientation() const {
+  Value get_orientation() const {
     return orientation_;
   }
 
   // Get raw IMU data
-  ImuRaw get_raw() const {
+  Raw get_raw() const {
     return raw_;
   }
 
 private:
   ICM::Config make_default_config(espp::I2c &i2c);
-  ICM imu_;                // icm20948 instance
-  ImuValue orientation_{}; // Filtered orientation data
-  ImuRaw raw_{};           // Raw orientation data
+  ICM imu_;             // icm20948 instance
+  Value orientation_{}; // Filtered orientation data
+  Raw raw_{};           // Raw orientation data
 };
 } // namespace SENSORS

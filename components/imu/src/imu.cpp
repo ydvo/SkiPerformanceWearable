@@ -1,4 +1,5 @@
 #include "imu.hpp"
+#include <system_error>
 
 namespace SENSORS {
 
@@ -21,6 +22,17 @@ ICM::Config Imu::make_default_config(espp::I2c &i2c) {
                                  .magnetometer_mode = MAGNETOMETER_MODE},
                   .auto_init = false};
   return cfg;
+}
+
+bool Imu::init() {
+  std::error_code ec;
+  imu_.init(ec);
+
+  if (ec) {
+    return false;
+  } else {
+    return true;
+  }
 }
 
 // whoami

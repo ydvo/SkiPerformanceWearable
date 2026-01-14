@@ -7,11 +7,12 @@
 
 #include "GPIO.hpp"
 #include "i2c.hpp"
-#include "icm20948.hpp"
+#include "imu.hpp"
 #include "led.hpp"
 #include "logger.hpp"
 
 #include <cstdio>
+#include <stdint.h>
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -23,7 +24,7 @@ constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 
 // Logging
-espp::Logger logger({.tag = "Ski-wearable module", .level = espp::Logger::Verbosity::INFO});
+espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
 
 // I2C
 espp::I2c i2c({
@@ -34,6 +35,12 @@ espp::I2c i2c({
     .scl_pullup_en = GPIO_PULLUP_ENABLE,
     .auto_init = false,
 });
+
+// IMU
+SENSORS::Imu imu(i2c);
+
+// Filescope Vars
+float dt = 0;
 
 /*
  * initSystem()
@@ -55,7 +62,10 @@ void initSystem() {
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
   std::error_code ec;
-  i2c.init(ec);
+  i2c.init(ec); // initialize
+  if (ec) {
+    logger.error("Error initializing i2c");
+  }
 
   // i2c scanner
   // logger.info("Scanning I2C devices");
@@ -68,7 +78,15 @@ void initSystem() {
   // logger.info("Found devices at addresses: {::#02x}", found_addresses);
   //
 
-  logger.info("Creating IMU");
+  // init imu
+  bool imu_initialized = imu.init();
+  // ensure imu is configured correctly
+  uint8_t test = imu.get_whoami();
+  if (test != 0xEA && !imu_initialized) {
+    logger.error("Could not initialize imu");
+  } else {
+    logger.info("Imu initialized");
+  }
 
   red_led.turn_on();
 }
@@ -77,7 +95,12 @@ void initSystem() {
  * mainLoop
  *  - runs repeatedly, contains update logic
  */
-void mainLoop() {}
+void mainLoop() {
+  if (imu.update(dt)) {
+    SENSORS::Imu::Raw raw = imu.get_raw();
+    logger.info("a{} g{} m{}", raw.accel, raw.gyro, raw.mag);
+  }
+}
 
 /* Application Entry Point */
 extern "C" void app_main() {
@@ -90,12 +113,12 @@ extern "C" void app_main() {
     static auto t0{now};
     auto t1{now};
     std::chrono::duration<float> dt_ = t1 - t0;
-    float dt = dt_.count();
+    dt = dt_.count();
     t0 = t1;
-    logger.info("Elapsed time in float seconds: {}", dt);
+    // logger.info("Elapsed time in float seconds: {}", dt);
 
     mainLoop(); // run repeatedly
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
