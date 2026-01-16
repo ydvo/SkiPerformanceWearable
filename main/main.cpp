@@ -111,8 +111,7 @@ void initSystem() {
   }
 
   STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
-    spi_flash, 
-    0x0
+    spi_flash
   ); 
 }
 

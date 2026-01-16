@@ -7,8 +7,10 @@ namespace STORAGE {
   static const char *TAG = "FLASH_LOG"; 
 
   template <typename T>
-  FlashLog<T>::FlashLog(STORAGE::SpiFlashDevice &dev, uint32_t base) noexcept: 
-    dev_{dev}, write_addr_{base}, seq_{0} {}
+  FlashLog<T>::FlashLog(STORAGE::SpiFlashDevice &dev) noexcept: 
+    dev_{dev}, write_addr_{scan_flash()}, seq_{0} {
+      ESP_LOGI(TAG, "Initialized FlashLog with a write address of 0x%x. ", write_addr_); 
+    }
 
   template <typename T>
   esp_err_t FlashLog<T>::append(const T &sample, const uint64_t timestamp_us) {
@@ -62,6 +64,26 @@ namespace STORAGE {
     ++seq_; 
 
     return ESP_OK; 
+  }
+
+  template <typename T>
+  uint32_t FlashLog<T>::scan_flash() const {
+    uint32_t read_addr {0x0}; 
+    Frame current_frame {};
+
+    while (true) {
+      if (dev_.read(read_addr, &current_frame, sizeof(Frame)) != ESP_OK) {
+        break; 
+      }
+
+      if (current_frame.magic != MAGIC || current_frame.crc != compute_crc(current_frame)) {
+        break; 
+      }
+
+      read_addr += sizeof(Frame); 
+    }
+
+    return read_addr;
   }
 
 template class FlashLog<ImuValue>; 

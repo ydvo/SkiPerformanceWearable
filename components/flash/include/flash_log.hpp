@@ -25,7 +25,7 @@ public:
   static_assert(sizeof(Frame) == 256, "frame size expected to be 256 bytes");
   static_assert(std::is_trivially_copyable_v<Frame>, "frame must be trivially copyable"); 
 
-  explicit FlashLog(STORAGE::SpiFlashDevice &dev, uint32_t base) noexcept;
+  explicit FlashLog(STORAGE::SpiFlashDevice &dev) noexcept;
   esp_err_t append(const T &sample, const uint64_t timestamp_us);
 
 private: 
@@ -36,6 +36,7 @@ private:
 
   uint32_t compute_crc(const Frame &frame) const; 
   esp_err_t flush(const Payload& payload); 
+  uint32_t scan_flash() const; 
 }; 
 
 struct ImuValue {
