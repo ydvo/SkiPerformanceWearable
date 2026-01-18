@@ -9,11 +9,13 @@ namespace STORAGE {
 
   template <typename T>
   FlashLog<T>::FlashLog(STORAGE::SpiFlashDevice &dev) noexcept: 
-    dev_{dev}, write_addr_{0}, seq_{0} {}
+    dev_{dev}, write_addr_{0}, read_addr_{0}, seq_{0} {}
 
   template <typename T>
   esp_err_t FlashLog<T>::init() {
     write_addr_ = scan_flash(); 
+    read_addr_ = write_addr_; 
+
     size_t sector_size = dev_.sector_size(); 
     uint32_t erase_addr = write_addr_ - (write_addr_ % sector_size); 
 
@@ -109,6 +111,50 @@ namespace STORAGE {
     }
 
     return read_addr;
+  }
+
+  template <typename T>
+  esp_err_t FlashLog<T>::read(Frame *buffer, size_t len) {
+    // TODO: Figure out limiting wirte_addr and erasing not to touch existing data. 
+    if (len == 0) return ESP_OK;
+
+    if (write_addr_ >= read_addr_) {
+      // write_addr_ in front of read_addr_
+      if (len > (write_addr_ - read_addr_) / sizeof(Frame)) {
+        return ESP_ERR_INVALID_SIZE;
+      }
+
+      ESP_RETURN_ON_ERROR(
+        dev_.read(read_addr_, buffer, len * sizeof(Frame)), 
+        TAG, "Failed to read the flash device."
+      );
+
+      read_addr_ += len * sizeof(Frame);
+    } else {
+      // write_addr_ in the back of read_addr_, need to wrap
+      uint32_t chip_size = dev_.size_bytes(); 
+      if (len > (chip_size + write_addr_ - read_addr_) / sizeof(Frame)) {
+        return ESP_ERR_INVALID_SIZE; 
+      }
+
+      size_t len_to_read = (chip_size - read_addr_) / sizeof(Frame); 
+      if (len_to_read > 0) {
+        ESP_RETURN_ON_ERROR(
+          dev_.read(read_addr_, buffer, len_to_read * sizeof(Frame)), 
+          TAG, "Failed to read the flash device"
+        ); 
+      }
+
+      ESP_RETURN_ON_ERROR(
+        dev_.read(0x0, &buffer[len_to_read], (len - len_to_read)*sizeof(Frame)), 
+        TAG, "Failed to read the flash device"
+      ); 
+
+      read_addr_ += len * sizeof(Frame);
+      read_addr_ %= chip_size;
+    }
+
+    return ESP_OK; 
   }
 
 template class FlashLog<ImuValue>; 

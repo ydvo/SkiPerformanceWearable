@@ -28,11 +28,13 @@ public:
   explicit FlashLog(STORAGE::SpiFlashDevice &dev) noexcept;
   esp_err_t init(); 
   esp_err_t append(const T &sample, const uint64_t timestamp_us);
+  esp_err_t read(Frame *buffer, size_t len);
 
 private: 
   T buffer_[14]; 
   STORAGE::SpiFlashDevice &dev_; 
   uint32_t write_addr_;
+  uint32_t read_addr_; 
   uint32_t seq_; 
 
   uint32_t compute_crc(const Frame &frame) const; 
