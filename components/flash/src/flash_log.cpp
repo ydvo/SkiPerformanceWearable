@@ -1,6 +1,7 @@
 #include "flash_log.hpp"
 #include "esp_crc.h"
 #include "esp_log.h"
+#include "esp_check.h"
 
 namespace STORAGE {
 
@@ -8,9 +9,22 @@ namespace STORAGE {
 
   template <typename T>
   FlashLog<T>::FlashLog(STORAGE::SpiFlashDevice &dev) noexcept: 
-    dev_{dev}, write_addr_{scan_flash()}, seq_{0} {
-      ESP_LOGI(TAG, "Initialized FlashLog with a write address of 0x%x. ", write_addr_); 
-    }
+    dev_{dev}, write_addr_{0}, seq_{0} {}
+
+  template <typename T>
+  esp_err_t FlashLog<T>::init() {
+    write_addr_ = scan_flash(); 
+    size_t sector_size = dev_.sector_size(); 
+    uint32_t erase_addr = write_addr_ - (write_addr_ % sector_size); 
+
+    ESP_RETURN_ON_ERROR(
+      dev_.erase_region(erase_addr, sector_size), 
+      TAG, "Failed to erase the region on initialization"
+    ); 
+
+    ESP_LOGI(TAG, "Initialized FlashLog with a write address of 0x%x. ", write_addr_); 
+    return ESP_OK; 
+  }
 
   template <typename T>
   esp_err_t FlashLog<T>::append(const T &sample, const uint64_t timestamp_us) {
@@ -53,14 +67,25 @@ namespace STORAGE {
 
     frame.crc = compute_crc(frame); 
 
-    esp_err_t err = dev_.write(write_addr_, &frame, sizeof(Frame)); 
-    if (err != ESP_OK) {
-      return err;
-    }
+    if (seq_ != 0 && write_addr_ % dev_.sector_size() == 0) {
+      ESP_RETURN_ON_ERROR(
+        dev_.erase_region(write_addr_, dev_.sector_size()), 
+        TAG, "Failed to erase the region before writing."
+      ); 
+    }; 
+
+    ESP_RETURN_ON_ERROR(
+      dev_.write(write_addr_, &frame, sizeof(Frame)), 
+      TAG, "Failed to write payload to the chip."
+    );
 
     ESP_LOGI(TAG, "Flushed %d bytes of data into 0x%x address.", sizeof(Frame), write_addr_);
 
     write_addr_ += sizeof(Frame); 
+    if (dev_.size_bytes() - write_addr_ < sizeof(Frame)) {
+      write_addr_ = 0; 
+    }
+
     ++seq_; 
 
     return ESP_OK; 

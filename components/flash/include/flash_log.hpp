@@ -26,6 +26,7 @@ public:
   static_assert(std::is_trivially_copyable_v<Frame>, "frame must be trivially copyable"); 
 
   explicit FlashLog(STORAGE::SpiFlashDevice &dev) noexcept;
+  esp_err_t init(); 
   esp_err_t append(const T &sample, const uint64_t timestamp_us);
 
 private: 

@@ -46,11 +46,22 @@ espp::I2c i2c({
   .auto_init = false,
 });
 
+// SPI Flash Device
+STORAGE::SpiFlashDevice spi_flash ({
+  .host = SPI2_HOST,
+  .cs = flash_spi_cs
+});
+
+// Flash Log
+STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
+  spi_flash
+);
+
 /*
  * initSystem()
  *  - initialization function, runs once before main loop
  */
-void initSystem() {
+esp_err_t initSystem() {
 
   logger.info("Initializing...");
 
@@ -67,20 +78,7 @@ void initSystem() {
 
   std::error_code ec;
   i2c.init(ec);
-
-  // i2c scanner
-  // logger.info("Scanning I2C devices");
-  // std::vector<uint8_t> found_addresses;
-  // for (uint8_t address = 1; address < 128; address++) {
-  //   if (i2c.probe_device(address)) {
-  //     found_addresses.push_back(address);
-  //   }
-  // }
-  // logger.info("Found devices at addresses: {::#02x}", found_addresses);
-  //
-
   logger.info("Creating IMU");
-
   red_led.turn_on();
 
   spi_bus_config_t spi2_bus_config {
@@ -91,28 +89,22 @@ void initSystem() {
     .quadhd_io_num = -1, 
   }; 
 
-  if (spi_bus_initialize(SPI2_HOST, &spi2_bus_config, SPI_DMA_CH_AUTO) != ESP_OK){
-    logger.info("Failed to initialize SPI_2 bus. Terminating initialization."); 
-    return; 
-  }
-
-  STORAGE::SpiFlashDevice spi_flash ({
-    .host = SPI2_HOST,
-    .cs = flash_spi_cs
-  });
-
-  spi_flash.init(); 
-
-  uint32_t data {4};
-  if (spi_flash.read(0x0, &data, sizeof(data)) == ESP_OK) {
-    logger.info("Read the data: {:#x}", data); 
-  } else {
-    logger.info("Failed to read data"); 
-  }
-
-  STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
-    spi_flash
+  ESP_RETURN_ON_ERROR(
+    spi_bus_initialize(SPI2_HOST, &spi2_bus_config, SPI_DMA_CH_AUTO), 
+    "SYS_INIT", "Failed to initialize SPI_2 bus."
   ); 
+
+  ESP_RETURN_ON_ERROR(
+    spi_flash.init(), 
+    "SYS_INIT", "Failed to initialize SPI flash."
+  ); 
+
+  ESP_RETURN_ON_ERROR(
+    flash_log.init(), 
+    "SYS_INIT", "Failed to initialize flash log."
+  );
+
+  return ESP_OK; 
 }
 
 /*
@@ -135,6 +127,19 @@ extern "C" void app_main() {
     float dt = dt_.count();
     t0 = t1;
     logger.info("Elapsed time in float seconds: {}", dt);
+
+    auto microseconds_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
+
+    STORAGE::ImuValue sample {
+      .w = 1.0f, 
+      .x = 1.0f, 
+      .y = 1.0f, 
+      .z = 1.0f
+    }; 
+
+    if (flash_log.append(sample, microseconds_since_epoch) != ESP_OK) {
+      logger.info("Failed appending to the flash log."); 
+    }
 
     mainLoop(); // run repeatedly
 
