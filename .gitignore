@@ -1,4 +1,5 @@
 build/
+managed_components/
 
 *.o
 *.a
@@ -10,6 +11,12 @@ build/
 *.dSYM
 .cache
 
+
+# to use clangd lsp run 
+#   idf.py -B build.clang -D IDF_TOOLCHAIN=clang reconfigure 
+# and point clangd to compile commands file in build.clang
+
 # ignore compile flags and clangd cfg
 compile_commands.json
 .clangd
+build.clang/
