@@ -9,46 +9,34 @@ namespace STORAGE {
 
   template <typename T>
   FlashLog<T>::FlashLog(STORAGE::SpiFlashDevice &dev) noexcept: 
-    dev_{dev}, write_addr_{0}, read_addr_{0}, seq_{0} {}
+    dev_{dev} {}
 
   template <typename T>
   esp_err_t FlashLog<T>::init() {
-    write_addr_ = scan_flash(); 
-    read_addr_ = write_addr_; 
-
-    size_t sector_size = dev_.sector_size(); 
-    uint32_t erase_addr = write_addr_ - (write_addr_ % sector_size); 
-
-    ESP_RETURN_ON_ERROR(
-      dev_.erase_region(erase_addr, sector_size), 
-      TAG, "Failed to erase the region on initialization"
+    scan_flash(); 
+    ESP_LOGI(
+      TAG, "Recovered read=0x%x write=0x%x seq=%u", read_addr_, write_addr_, seq_
     ); 
 
-    ESP_LOGI(TAG, "Initialized FlashLog with a write address of 0x%x. ", write_addr_); 
     return ESP_OK; 
   }
 
   template <typename T>
   esp_err_t FlashLog<T>::append(const T &sample, const uint64_t timestamp_us) {
-    static uint32_t sample_idx = 0; 
-    static uint64_t start_timestamp_us = timestamp_us; 
+    if (sample_idx_ == 0) start_timestamp_us_ = timestamp_us; 
 
-    buffer_[sample_idx] = sample;
-    if (sample_idx == 0) {
-      start_timestamp_us = timestamp_us; 
-    }
+    sample_buffer_[sample_idx_++] = sample; 
 
-    if (++sample_idx < 14) {
+    if (sample_idx_ < SAMPLES_PER_FRAME) {
       return ESP_OK; 
     }
 
     Payload payload {};
-    payload.start_t_us = start_timestamp_us; 
-    memcpy(payload.data, buffer_, sizeof(buffer_)); 
+    payload.start_t_us = start_timestamp_us_; 
+    memcpy(payload.data, sample_buffer_.data(), sizeof(sample_buffer_)); 
     payload.end_t_us = timestamp_us; 
 
-    sample_idx = 0; 
-
+    sample_idx_ = 0; 
     return flush(payload); 
   }
 
@@ -60,7 +48,22 @@ namespace STORAGE {
   }
 
   template <typename T>
+  bool FlashLog<T>::valid(const Frame &frame) const {
+    return frame.magic == MAGIC && frame.crc == compute_crc(frame); 
+  }
+
+  template <typename T>
   esp_err_t FlashLog<T>::flush(const Payload &payload) {
+    uint32_t next = next_addr(write_addr_); 
+    if (would_overrun(next)) return ESP_ERR_NO_MEM; 
+
+    if (write_addr_ % dev_.sector_size() == 0) {
+      ESP_RETURN_ON_ERROR(
+        erase_sector(write_addr_), 
+        TAG, "Failed to erase the region before writing."
+      );
+    }
+
     Frame frame {}; 
     frame.magic = MAGIC; 
     frame.sample_idx = seq_; 
@@ -69,13 +72,6 @@ namespace STORAGE {
 
     frame.crc = compute_crc(frame); 
 
-    if (seq_ != 0 && write_addr_ % dev_.sector_size() == 0) {
-      ESP_RETURN_ON_ERROR(
-        dev_.erase_region(write_addr_, dev_.sector_size()), 
-        TAG, "Failed to erase the region before writing."
-      ); 
-    }; 
-
     ESP_RETURN_ON_ERROR(
       dev_.write(write_addr_, &frame, sizeof(Frame)), 
       TAG, "Failed to write payload to the chip."
@@ -83,79 +79,80 @@ namespace STORAGE {
 
     ESP_LOGI(TAG, "Flushed %d bytes of data into 0x%x address.", sizeof(Frame), write_addr_);
 
-    write_addr_ += sizeof(Frame); 
-    if (dev_.size_bytes() - write_addr_ < sizeof(Frame)) {
-      write_addr_ = 0; 
-    }
-
+    write_addr_ = next; 
     ++seq_; 
-
     return ESP_OK; 
   }
 
   template <typename T>
-  uint32_t FlashLog<T>::scan_flash() const {
-    uint32_t read_addr {0x0}; 
-    Frame current_frame {};
+  void FlashLog<T>::scan_flash() {
+    Frame f {}; 
+    uint32_t addr {0}; 
 
-    while (true) {
-      if (dev_.read(read_addr, &current_frame, sizeof(Frame)) != ESP_OK) {
-        break; 
-      }
+    read_addr_ = 0; 
+    write_addr_ = 0; 
+    seq_ = 0; 
 
-      if (current_frame.magic != MAGIC || current_frame.crc != compute_crc(current_frame)) {
-        break; 
-      }
+    while (addr + sizeof(Frame) <= dev_.size_bytes()) {
+      if (dev_.read(addr, &f, sizeof(Frame)) != ESP_OK) break; 
 
-      read_addr += sizeof(Frame); 
+      if (!valid(f)) break; 
+
+      read_addr_ = addr; 
+      write_addr_ = next_addr(addr); 
+      seq_ = f.seq + 1; 
+      addr = write_addr_;
     }
-
-    return read_addr;
   }
 
   template <typename T>
-  esp_err_t FlashLog<T>::read(Frame *buffer, size_t len) {
-    // TODO: Figure out limiting wirte_addr and erasing not to touch existing data. 
-    if (len == 0) return ESP_OK;
+  uint32_t FlashLog<T>::next_addr(uint32_t addr) const {
+    addr += sizeof(Frame); 
+    if (addr + sizeof(Frame) > dev_.size_bytes()) {
+      addr = 0; 
+    }
 
-    if (write_addr_ >= read_addr_) {
-      // write_addr_ in front of read_addr_
-      if (len > (write_addr_ - read_addr_) / sizeof(Frame)) {
-        return ESP_ERR_INVALID_SIZE;
-      }
+    return addr;
+  }
+
+  template <typename T>
+  bool FlashLog<T>::would_overrun(uint32_t next_write) const {
+    return next_write == read_addr_; 
+  }
+
+  template <typename T>
+  esp_err_t FlashLog<T>::read(Frame *dst, size_t max_frames, size_t *frames_read) {
+
+    *frames_read = 0; 
+    while (*frames_read < max_frames && read_addr_ != write_addr_) {
+      Frame frame{}; 
 
       ESP_RETURN_ON_ERROR(
-        dev_.read(read_addr_, buffer, len * sizeof(Frame)), 
+        dev_.read(read_addr_, &frame, sizeof(Frame)), 
         TAG, "Failed to read the flash device."
       );
 
-      read_addr_ += len * sizeof(Frame);
-    } else {
-      // write_addr_ in the back of read_addr_, need to wrap
-      uint32_t chip_size = dev_.size_bytes(); 
-      if (len > (chip_size + write_addr_ - read_addr_) / sizeof(Frame)) {
-        return ESP_ERR_INVALID_SIZE; 
-      }
+      if (!valid(frame)) break; 
 
-      size_t len_to_read = (chip_size - read_addr_) / sizeof(Frame); 
-      if (len_to_read > 0) {
-        ESP_RETURN_ON_ERROR(
-          dev_.read(read_addr_, buffer, len_to_read * sizeof(Frame)), 
-          TAG, "Failed to read the flash device"
-        ); 
-      }
-
-      ESP_RETURN_ON_ERROR(
-        dev_.read(0x0, &buffer[len_to_read], (len - len_to_read)*sizeof(Frame)), 
-        TAG, "Failed to read the flash device"
-      ); 
-
-      read_addr_ += len * sizeof(Frame);
-      read_addr_ %= chip_size;
+      dst[*frames_read] = frame; 
+      read_addr_ = next_addr(read_addr_); 
+      (*frames_read)++; 
     }
 
     return ESP_OK; 
   }
 
+  template <typename T>
+  esp_err_t FlashLog<T>::erase_sector(uint32_t addr) {
+    uint32_t sector = addr - (addr % dev_.sector_size());
+
+    // Do not erase if ...
+    if (
+      read_addr_ != write_addr && // if not empty
+      read_addr_ >= sector && read_addr_ < sector + dev_.sector_size() // if the read addr inside that sector
+    ) return ESP_ERR_INVALID_STATE; 
+
+    return dev_.erase_region(sector, dev_.sector_size()); 
+  }
 template class FlashLog<ImuValue>; 
 }
