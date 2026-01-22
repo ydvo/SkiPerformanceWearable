@@ -3,7 +3,7 @@
 #include "i2c.hpp"
 #include "icm20948.hpp"
 #include "icm20948_detail.hpp"
-#include "madgwick_filter.hpp"
+#include "madgwick_filter_quat.hpp"
 #include <cstdint>
 
 using ICM = espp::Icm20948<espp::icm20948::Interface::I2C>;
@@ -33,13 +33,20 @@ public:
   static constexpr float MADGWICK_BETA{0.1f}; // default filter beta
 
   /* Structs */
-  struct ImuValue {
-    float roll{};
-    float pitch{};
-    float yaw{};
+  struct Value {
+    float x{};
+    float y{};
+    float z{};
   };
 
-  struct ImuRaw {
+  struct Quaternion {
+    float w{};
+    float x{};
+    float y{};
+    float z{};
+  };
+
+  struct Raw {
     espp::icm20948::Value accel{};
     espp::icm20948::Value gyro{};
     espp::icm20948::Value mag{};
@@ -53,26 +60,31 @@ public:
 
   explicit Imu(ICM::Config cfg);
 
+  // initialize
+  bool init();
+
   // whoami
   uint8_t get_whoami();
 
   // Update IMU with timestep dt (s), returns true if successful
+  bool update_raw(float dt);
   bool update(float dt);
 
   // Get filtered orientation (Madgwick)
-  ImuValue get_orientation() const {
+  Quaternion get_orientation() const {
     return orientation_;
   }
 
   // Get raw IMU data
-  ImuRaw get_raw() const {
+  Raw get_raw() const {
     return raw_;
   }
 
 private:
   ICM::Config make_default_config(espp::I2c &i2c);
-  ICM imu_;                // icm20948 instance
-  ImuValue orientation_{}; // Filtered orientation data
-  ImuRaw raw_{};           // Raw orientation data
+  ICM imu_;                         // icm20948 instance
+  espp::MadgwickFilterQuat filter_; // madgwick filter instance
+  Quaternion orientation_{};        // Filtered orientation data
+  Raw raw_{};                       // Raw orientation data
 };
 } // namespace SENSORS

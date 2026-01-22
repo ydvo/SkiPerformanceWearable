@@ -9,13 +9,14 @@
 
 #include "GPIO.hpp"
 #include "i2c.hpp"
-#include "icm20948.hpp"
+#include "imu.hpp"
 #include "led.hpp"
 #include "logger.hpp"
 #include "flash.hpp"
 #include "flash_log.hpp"
 
 #include <cstdio>
+#include <stdint.h>
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -34,7 +35,7 @@ static constexpr auto spi2_miso {GPIO_NUM_13};
 static constexpr auto flash_spi_cs {GPIO_NUM_10}; 
 
 // Logging
-espp::Logger logger({.tag = "Ski-wearable module", .level = espp::Logger::Verbosity::INFO});
+espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
 
 // I2C
 espp::I2c i2c({
@@ -56,6 +57,11 @@ STORAGE::SpiFlashDevice spi_flash ({
 STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
   spi_flash
 );
+// IMU
+SENSORS::Imu imu(i2c);
+
+// Filescope Vars
+float dt = 0;
 
 /*
  * initSystem()
@@ -77,8 +83,35 @@ esp_err_t initSystem() {
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
   std::error_code ec;
-  i2c.init(ec);
-  logger.info("Creating IMU");
+  i2c.init(ec); // initialize
+  if (ec) {
+    logger.error("Error initializing i2c");
+  }
+
+  // i2c scanner
+  // logger.info("Scanning I2C devices");
+  // std::vector<uint8_t> found_addresses;
+  // for (uint8_t address = 1; address < 128; address++) {
+  //   if (i2c.probe_device(address)) {
+  //     found_addresses.push_back(address);
+  //   }
+  // }
+  // logger.info("Found devices at addresses: {::#02x}", found_addresses);
+  //
+
+  // init imu
+  bool imu_initialized = imu.init();
+  // ensure imu is configured correctly
+
+  vTaskDelay(pdMS_TO_TICKS(10)); // give imu time to startup before first i2c read
+
+  uint8_t test = imu.get_whoami();
+  if (test != 0xEA && !imu_initialized) {
+    logger.error("Could not initialize imu");
+  } else {
+    logger.info("Imu initialized");
+  }
+
   red_led.turn_on();
 
   spi_bus_config_t spi2_bus_config {
@@ -111,7 +144,12 @@ esp_err_t initSystem() {
  * mainLoop
  *  - runs repeatedly, contains update logic
  */
-void mainLoop() {}
+void mainLoop() {
+  if (imu.update(dt)) {
+    SENSORS::Imu::Quaternion quat = imu.get_orientation();
+    printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
+  }
+}
 
 /* Application Entry Point */
 extern "C" void app_main() {
@@ -124,9 +162,9 @@ extern "C" void app_main() {
     static auto t0{now};
     auto t1{now};
     std::chrono::duration<float> dt_ = t1 - t0;
-    float dt = dt_.count();
+    dt = dt_.count();
     t0 = t1;
-    logger.info("Elapsed time in float seconds: {}", dt);
+    // logger.info("Elapsed time in float seconds: {}", dt);
 
     auto microseconds_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
 
@@ -143,6 +181,6 @@ extern "C" void app_main() {
 
     mainLoop(); // run repeatedly
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }

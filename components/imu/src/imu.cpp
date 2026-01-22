@@ -1,11 +1,13 @@
 #include "imu.hpp"
+#include "fast_math.hpp"
+#include <system_error>
 
 namespace SENSORS {
 
 // constructor
 Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {}
 
-Imu::Imu(ICM::Config cfg) : imu_(cfg) {}
+Imu::Imu(ICM::Config cfg) : imu_(cfg), filter_(MADGWICK_BETA) {}
 
 // Construct default config from i2c
 ICM::Config Imu::make_default_config(espp::I2c &i2c) {
@@ -23,6 +25,17 @@ ICM::Config Imu::make_default_config(espp::I2c &i2c) {
   return cfg;
 }
 
+bool Imu::init() {
+  std::error_code ec;
+  imu_.init(ec);
+
+  if (ec) {
+    return false;
+  } else {
+    return false;
+  }
+}
+
 // whoami
 uint8_t Imu::get_whoami() {
   std::error_code ec;
@@ -30,6 +43,21 @@ uint8_t Imu::get_whoami() {
 }
 
 // update
+bool Imu::update_raw(float dt) {
+  std::error_code ec;
+  if (!imu_.update(dt, ec)) {
+    return false;
+  }
+
+  // store raw values
+  raw_.accel = imu_.get_accelerometer();
+  raw_.gyro = imu_.get_gyroscope();
+  raw_.mag = imu_.get_magnetometer();
+  raw_.temperature = imu_.get_temperature();
+
+  return true;
+}
+
 bool Imu::update(float dt) {
   std::error_code ec;
   if (!imu_.update(dt, ec)) {
@@ -42,18 +70,13 @@ bool Imu::update(float dt) {
   raw_.mag = imu_.get_magnetometer();
   raw_.temperature = imu_.get_temperature();
 
-  // // update Madgwick filter
-  // madgwick_.update(dt, raw_.accel.x, raw_.accel.y, raw_.accel.z, espp::deg_to_rad(raw_.gyro.x),
-  //                  espp::deg_to_rad(raw_.gyro.y), espp::deg_to_rad(raw_.gyro.z), raw_.mag.x,
-  //                  raw_.mag.y, raw_.mag.z);
-  //
-  // float roll_deg, pitch_deg, yaw_deg;
-  // madgwick_.get_euler(roll_deg, pitch_deg, yaw_deg);
-  //
-  // // convert to radians for orientation
-  // orientation_.roll = espp::deg_to_rad(roll_deg);
-  // orientation_.pitch = espp::deg_to_rad(pitch_deg);
-  // orientation_.yaw = espp::deg_to_rad(yaw_deg);
+  // apply madgwick filter
+  filter_.update(dt, raw_.accel.x, raw_.accel.y, raw_.accel.z, espp::deg_to_rad(raw_.gyro.x),
+                 espp::deg_to_rad(raw_.gyro.y), espp::deg_to_rad(raw_.gyro.z), raw_.mag.x,
+                 raw_.mag.y, raw_.mag.z);
+
+  // get quaternion values
+  filter_.get_quaternion(orientation_.w, orientation_.x, orientation_.y, orientation_.z);
 
   return true;
 }
