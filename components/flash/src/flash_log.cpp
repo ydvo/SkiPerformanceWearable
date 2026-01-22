@@ -148,7 +148,7 @@ namespace STORAGE {
 
     // Do not erase if ...
     if (
-      read_addr_ != write_addr && // if not empty
+      read_addr_ != write_addr_ && // if not empty
       read_addr_ >= sector && read_addr_ < sector + dev_.sector_size() // if the read addr inside that sector
     ) return ESP_ERR_INVALID_STATE; 
 
