@@ -17,10 +17,10 @@ public:
 
   struct Frame {
     uint32_t magic; 
-    uint32_t seq; 
-    uint32_t sample_idx; 
-    Payload payload; 
-    uint32_t crc; 
+    uint32_t seq;
+    Payload payload;  
+    uint32_t padding; 
+    uint32_t crc;
   } __attribute__((packed));
 
   static_assert(sizeof(Frame) == 256, "frame size expected to be 256 bytes");
@@ -30,6 +30,7 @@ public:
   esp_err_t init(); 
   esp_err_t append(const T &sample, const uint64_t timestamp_us);
   esp_err_t read(Frame *dst, size_t max_frames, size_t *frames_read);
+  bool is_full() const;
 
 private: 
   // persistent write and read state
@@ -48,9 +49,7 @@ private:
   bool valid(const Frame &frame) const; 
 
   uint32_t next_addr(uint32_t addr) const;
-  bool would_overrun(uint32_t next_write) const; 
-
-  void scan_flash();
+  bool would_overrun(uint32_t next_write) const;
 
   esp_err_t erase_sector(uint32_t addr);
   esp_err_t flush(const Payload& payload); 
