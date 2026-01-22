@@ -13,7 +13,7 @@ public:
     int64_t start_t_us;
     T data[SAMPLES_PER_FRAME]; 
     int64_t end_t_us;
-  };
+  } __attribute__((packed));
 
   struct Frame {
     uint32_t magic; 
@@ -55,11 +55,4 @@ private:
   esp_err_t erase_sector(uint32_t addr);
   esp_err_t flush(const Payload& payload); 
 }; 
-
-struct ImuValue {
-  float w; 
-  float x; 
-  float y; 
-  float z; 
-};
 }

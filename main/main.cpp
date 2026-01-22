@@ -54,7 +54,7 @@ STORAGE::SpiFlashDevice spi_flash ({
 });
 
 // Flash Log
-STORAGE::FlashLog<STORAGE::ImuValue> flash_log(
+STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(
   spi_flash
 );
 // IMU
@@ -87,17 +87,6 @@ esp_err_t initSystem() {
   if (ec) {
     logger.error("Error initializing i2c");
   }
-
-  // i2c scanner
-  // logger.info("Scanning I2C devices");
-  // std::vector<uint8_t> found_addresses;
-  // for (uint8_t address = 1; address < 128; address++) {
-  //   if (i2c.probe_device(address)) {
-  //     found_addresses.push_back(address);
-  //   }
-  // }
-  // logger.info("Found devices at addresses: {::#02x}", found_addresses);
-  //
 
   // init imu
   bool imu_initialized = imu.init();
@@ -146,8 +135,15 @@ esp_err_t initSystem() {
  */
 void mainLoop() {
   if (imu.update(dt)) {
+    // get timestamp
+    auto now{std::chrono::system_clock::now()};
+    auto timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
+
     SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
+    
+    if (flash_log.append(quat, timestamp_us) != ESP_OK) {
+      logger.info("Failed appending to the flash log."); 
+    }
   }
 }
 
@@ -164,20 +160,6 @@ extern "C" void app_main() {
     std::chrono::duration<float> dt_ = t1 - t0;
     dt = dt_.count();
     t0 = t1;
-    // logger.info("Elapsed time in float seconds: {}", dt);
-
-    auto microseconds_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
-
-    STORAGE::ImuValue sample {
-      .w = 1.0f, 
-      .x = 1.0f, 
-      .y = 1.0f, 
-      .z = 1.0f
-    }; 
-
-    if (flash_log.append(sample, microseconds_since_epoch) != ESP_OK) {
-      logger.info("Failed appending to the flash log."); 
-    }
 
     mainLoop(); // run repeatedly
 

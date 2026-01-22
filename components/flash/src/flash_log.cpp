@@ -2,6 +2,7 @@
 #include "esp_crc.h"
 #include "esp_log.h"
 #include "esp_check.h"
+#include "imu.hpp"
 
 namespace STORAGE {
 
@@ -154,5 +155,5 @@ namespace STORAGE {
 
     return dev_.erase_region(sector, dev_.sector_size()); 
   }
-template class FlashLog<ImuValue>; 
+template class FlashLog<SENSORS::Imu::Quaternion>; 
 }
