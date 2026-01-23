@@ -15,7 +15,7 @@ namespace STORAGE {
 
   template <typename T>
   esp_err_t FlashLog<T>::init() {
-    uint32_t num_sectors = dev_.size_bytes() % dev_.sector_size(); 
+    uint32_t num_sectors = dev_.size_bytes() / dev_.sector_size(); 
     uint32_t start_sector = esp_random() % num_sectors; 
 
     write_addr_ = start_sector * dev_.sector_size();
