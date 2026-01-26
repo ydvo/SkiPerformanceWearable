@@ -112,7 +112,7 @@ namespace STORAGE {
     uint32_t next_sector = next_write / dev_.sector_size(); 
     uint32_t read_sector = read_addr_ / dev_.sector_size(); 
 
-    return next_sector == read_sector && read_addr_ != write_addr_;  
+    return next_sector == read_sector && next_write % dev_.sector_size() == 0;
   }
 
   template <typename T>

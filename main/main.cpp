@@ -17,6 +17,7 @@
 
 #include <cstdio>
 #include <stdint.h>
+#include <array>
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -68,7 +69,6 @@ float dt = 0;
  *  - initialization function, runs once before main loop
  */
 esp_err_t initSystem() {
-
   logger.info("Initializing...");
 
   // enable QT Stemma Port
@@ -86,20 +86,27 @@ esp_err_t initSystem() {
   i2c.init(ec); // initialize
   if (ec) {
     logger.error("Error initializing i2c");
+    return ESP_ERR_INVALID_STATE; 
   }
+
+  vTaskDelay(pdMS_TO_TICKS(100));
 
   // init imu
   bool imu_initialized = imu.init();
   // ensure imu is configured correctly
+  if (!imu_initialized) {
+    logger.error("Failed to initialize imu"); 
+    return ESP_ERR_INVALID_STATE;
+  }
 
-  vTaskDelay(pdMS_TO_TICKS(10)); // give imu time to startup before first i2c read
+  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
 
   uint8_t test = imu.get_whoami();
-  if (test != 0xEA && !imu_initialized) {
-    logger.error("Could not initialize imu");
-  } else {
-    logger.info("Imu initialized");
+  if (test != 0xEA) {
+    logger.error("Invalid imu device id {}", test);
   }
+
+  logger.info("Initialized imu"); 
 
   red_led.turn_on();
 
@@ -133,23 +140,75 @@ esp_err_t initSystem() {
  * mainLoop
  *  - runs repeatedly, contains update logic
  */
-void mainLoop() {
+esp_err_t mainLoop() {
+  static std::array<STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame, 10> frame_read_buf {};
+  static std::array<SENSORS::Imu::Quaternion, 10 * 14> quat_write_buf {};
+  static auto quat_write_ptr = quat_write_buf.begin(); 
+
   if (imu.update(dt)) {
     // get timestamp
     auto now{std::chrono::system_clock::now()};
     auto timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
 
     SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    
-    if (flash_log.append(quat, timestamp_us) != ESP_OK) {
-      logger.info("Failed appending to the flash log."); 
+    *quat_write_ptr = quat; 
+
+    ESP_RETURN_ON_ERROR(
+      flash_log.append(quat, timestamp_us), 
+      "MAIN_LOOP", "Failed appending to the flash log"
+    ); 
+
+    quat_write_ptr++;
+
+    if (quat_write_ptr == quat_write_buf.end()) {
+      quat_write_ptr = quat_write_buf.begin();
+
+      size_t frames_read; 
+      ESP_RETURN_ON_ERROR(
+        flash_log.read(frame_read_buf.begin(), frame_read_buf.size(), &frames_read), 
+        "MAIN_LOOP", "Failed to read the flash log."
+      );
+
+      logger.info("Read {} frames out of {} frames.", frames_read, frame_read_buf.size()); 
+
+      {
+        auto w_it = quat_write_buf.begin(); 
+        STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frame; 
+        SENSORS::Imu::Quaternion read_quat; 
+        SENSORS::Imu::Quaternion expected_quat;
+
+        for (size_t i = 0; i != frames_read; ++i) {
+          frame = frame_read_buf[i]; 
+          for (size_t j = 0; j != 14; ++j) {
+            read_quat = frame.payload.data[j]; 
+            expected_quat = *w_it; 
+
+            if (
+              read_quat.w != expected_quat.w || 
+              read_quat.x != expected_quat.x || 
+              read_quat.y != expected_quat.y || 
+              read_quat.z != expected_quat.z
+            ) {
+              ESP_LOGI("MAIN_LOOP", "Data mismatch. Expected {w: %0.3f, x: %0.3f, y: %0.3f, z: %0.3f}. Received {w: %0.3f, x: %0.3f, y: %0.3f, z: %0.3f}", 
+                expected_quat.w, expected_quat.x, expected_quat.y, expected_quat.z, read_quat.w, read_quat.x, read_quat.y, read_quat.z); 
+            }
+
+            w_it++; 
+          }
+        }
+      } 
     }
+
   }
+
+  return ESP_OK;
 }
 
 /* Application Entry Point */
 extern "C" void app_main() {
-  initSystem(); // called once
+  if (initSystem() != ESP_OK) {
+    logger.error("Failed initializing a system."); 
+  } // called once
 
   // Main event loop
   while (true) {
