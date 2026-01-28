@@ -6,6 +6,7 @@
 #include "esp_err.h"
 
 #include "GPIO.hpp"
+#include "fuelgauge.hpp"
 #include "i2c.hpp"
 #include "imu.hpp"
 #include "led.hpp"
@@ -39,8 +40,8 @@ espp::I2c i2c({
 // IMU
 SENSORS::Imu imu(i2c);
 
-// Filescope Vars
-float dt = 0;
+// Power
+POWER::fuelgauge battery(i2c);
 
 /*
  * initSystem()
@@ -92,17 +93,26 @@ void initSystem() {
   }
 
   red_led.turn_on();
+
+  if (!battery.isDeviceReady())
+    logger.error("Could not initialize fuel gauge. Check battery connection");
 }
 
 /*
  * mainLoop
  *  - runs repeatedly, contains update logic
  */
-void mainLoop() {
-  if (imu.update(dt)) {
-    SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
-  }
+void mainLoop(auto dt) {
+  // if (imu.update(dt)) {
+  //   SENSORS::Imu::Quaternion quat = imu.get_orientation();
+  //   printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
+  // }
+
+  float bat_volt = battery.cellVoltage();
+  float bat_percent = battery.cellPercent();
+  float discharge = battery.chargeRate();
+
+  printf("Battery state: %0.4fV %0.4f %0.4f per hour\r\n", bat_volt, bat_percent, discharge);
 }
 
 /* Application Entry Point */
@@ -111,17 +121,17 @@ extern "C" void app_main() {
 
   // Main event loop
   while (true) {
-    // delay
+    // get elapsed time in between loops
     auto now{std::chrono::system_clock::now()};
     static auto t0{now};
     auto t1{now};
     std::chrono::duration<float> dt_ = t1 - t0;
-    dt = dt_.count();
+    auto dt = dt_.count();
     t0 = t1;
     // logger.info("Elapsed time in float seconds: {}", dt);
 
-    mainLoop(); // run repeatedly
+    mainLoop(dt); // run repeatedly
 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }

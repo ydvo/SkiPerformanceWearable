@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
-    REQUIRES log led common imu
+    REQUIRES log led common imu power
 )
 
 # Stricter compiler flags for better C++
