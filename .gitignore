@@ -12,6 +12,7 @@ test_scripts/
 *.dSYM
 .cache
 
+sdkconfig.old
 
 # to use clangd lsp run 
 #   idf.py -B build.clang -D IDF_TOOLCHAIN=clang reconfigure 
