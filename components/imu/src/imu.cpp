@@ -32,7 +32,7 @@ bool Imu::init() {
   if (ec) {
     return false;
   } else {
-    return false;
+    return true;
   }
 }
 
