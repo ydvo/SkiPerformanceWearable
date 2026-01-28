@@ -6,6 +6,7 @@
 #include "esp_err.h"
 
 #include "GPIO.hpp"
+#include "ble.hpp"
 #include "i2c.hpp"
 #include "imu.hpp"
 #include "led.hpp"
@@ -39,8 +40,14 @@ espp::I2c i2c({
 // IMU
 SENSORS::Imu imu(i2c);
 
+// BLE - declare at file scope, initialize in initSystem()
+BLE::BleModule *ble_module_ptr = nullptr;
+
 // Filescope Vars
 float dt = 0;
+
+uint8_t battery_level = 100;
+bool was_connected = false;
 
 /*
  * initSystem()
@@ -92,6 +99,46 @@ void initSystem() {
   }
 
   red_led.turn_on();
+
+  // Configure BLE with custom settings
+  BLE::BleModule::Config ble_config;
+  ble_config.device_name = "Ski Wearable Test";
+  ble_config.manufacturer_name = "ESP-CPP";
+  ble_config.model_number = "ski-wearable-01";
+  ble_config.serial_number = "TEST123456";
+
+  // Set up connection callbacks
+  ble_config.on_connect = [](NimBLEConnInfo &info) {
+    printf("BLE: Client connected!\n");
+  };
+
+  ble_config.on_disconnect = [](NimBLEConnInfo &info,
+                                   espp::BleGattServer::DisconnectReason reason) {
+    printf("BLE: Client disconnected\n");
+  };
+
+  ble_config.on_authenticated = [](const NimBLEConnInfo &info) {
+    printf("BLE: Client authenticated successfully\n");
+  };
+
+  // Create and initialize BLE module
+  ble_module_ptr = new BLE::BleModule(ble_config);
+
+  if (!ble_module_ptr->init()) {
+    logger.error("Failed to initialize BLE module");
+    return;
+  }
+
+  logger.info("BLE module initialized successfully");
+
+  // Start advertising
+  if (!ble_module_ptr->start_advertising()) {
+    logger.error("Failed to start advertising");
+    return;
+  }
+
+  logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
+  logger.info("Connect with your phone's BLE scanner app");
 }
 
 /*
@@ -99,9 +146,46 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop() {
-  if (imu.update(dt)) {
-    SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
+  // if (imu.update(dt)) {
+  //   SENSORS::Imu::Quaternion quat = imu.get_orientation();
+  //   printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
+  // }
+
+  // Check connection status (only if BLE is initialized)
+  if (ble_module_ptr && ble_module_ptr->is_connected()) {
+    if (!was_connected) {
+      // Just connected
+      logger.info("Device connected! Getting device info...");
+
+      auto devices = ble_module_ptr->get_connected_device_infos();
+      for (const auto &device : devices) {
+        auto rssi = ble_module_ptr->get_rssi(device);
+        auto name = ble_module_ptr->get_device_name(device);
+        logger.info("  Device: {}, RSSI: {} dBm", name, rssi);
+      }
+
+      was_connected = true;
+    }
+
+    // Update battery level (simulate discharge)
+    ble_module_ptr->set_battery_level(battery_level);
+    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+
+    logger.info("Battery level updated: {}%", battery_level);
+
+  } else if (ble_module_ptr) {
+    if (was_connected) {
+      // Just disconnected
+      logger.info("Device disconnected. Resuming advertising...");
+      was_connected = false;
+      battery_level = 100; // Reset battery for next connection
+    }
+
+    // Not connected - show waiting message periodically
+    static int wait_count = 0;
+    if (wait_count++ % 10 == 0) {
+      logger.info("Waiting for BLE connection...");
+    }
   }
 }
 
@@ -122,6 +206,6 @@ extern "C" void app_main() {
 
     mainLoop(); // run repeatedly
 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
