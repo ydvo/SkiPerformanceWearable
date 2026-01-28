@@ -6,11 +6,11 @@
 #include "esp_err.h"
 
 #include "GPIO.hpp"
-#include "ble.hpp"
 #include "i2c.hpp"
 #include "imu.hpp"
 #include "led.hpp"
 #include "logger.hpp"
+#include "ble.hpp"
 
 #include <cstdio>
 #include <stdint.h>
