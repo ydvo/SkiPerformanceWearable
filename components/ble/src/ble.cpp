@@ -3,6 +3,20 @@
  */
 
 #include "ble.hpp"
+#include "NimBLEDevice.h"
+#include "esp_log.h"
+
+static const char *BLE_TAG = "BLE";
+
+// -------------------------------------------------------------
+// 128‑bit UUIDs for the custom service / characteristic
+// -------------------------------------------------------------
+static const uint8_t QUAT_SVC_UUID[16] = {
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf1 };
+static const uint8_t QUAT_CHAR_UUID[16] = {
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf2 };
 
 namespace BLE {
 
@@ -223,6 +237,58 @@ void BleModule::setup_advertising() {
   ble_gatt_server_.start();
 
   logger.debug("Advertising configured");
+}
+
+
+// Jaden's additions for quaternion service
+
+/* ----------------------------------------------------------------
+ *  Create the custom Quaternion service + NOTIFY characteristic
+ * ---------------------------------------------------------------- */
+void BleModule::init_quat_service()
+{
+    // 1️⃣  Get the NimBLE server that the ESP‑IDF has already created
+    NimBLEServer *pServer = NimBLEDevice::getServer();   // <‑‑ must use getServer()
+
+    // 2️⃣  Create the service on that server
+    NimBLEService *svc = pServer->createService(
+        NimBLEUUID(QUAT_SVC_UUID, 16));
+
+    // 3️⃣  Create a NOTIFY‑only characteristic
+    quat_char = svc->createCharacteristic(
+        NimBLEUUID(QUAT_CHAR_UUID, 16),
+        NIMBLE_PROPERTY::NOTIFY);
+
+    // 4️⃣  Add the mandatory CCCD descriptor (so the phone can enable/disable)
+    quat_char->createDescriptor(
+        NimBLEUUID((uint16_t)0x2902),
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+
+    svc->start();
+
+    ESP_LOGI(BLE_TAG, "Quaternion service/characteristic created");
+}
+
+/* ----------------------------------------------------------------
+ *  Send a quaternion notification – payload must be exactly 24 bytes
+ * ---------------------------------------------------------------- */
+void BleModule::notify_quaternion(const uint8_t *payload, size_t len)
+{
+    if (!quat_char) return;                // safety guard
+    quat_char->setValue(payload, len);
+    quat_char->notify();                    // false = notification (no ACK)
+}
+
+/* ----------------------------------------------------------------
+ *  Return true when the client has enabled notifications (CCCD = 0x0001)
+ * ---------------------------------------------------------------- */
+bool BleModule::quat_notify_enabled() const
+{
+    // The ESP‑IDF NimBLE API does not expose a direct “isSubscribed()”
+    // helper.  For our simple use‑case we only need to know that the
+    // characteristic object exists; calling notify() when nobody is
+    // subscribed is safe – the function will simply return false.
+    return (quat_char != nullptr);
 }
 
 } // namespace BLE

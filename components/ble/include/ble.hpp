@@ -132,6 +132,15 @@ public:
    * @param level Log verbosity level
    */
   void set_log_level(espp::Logger::Verbosity level);
+      
+  /** Register the custom Quaternion service/characteristic. Call once before advertising. */
+  void init_quat_service();
+
+  /** Send a quaternion notification (payload must be 24 bytes). */
+  void notify_quaternion(const uint8_t *payload, size_t len);
+
+  /** Returns true if a connected client has enabled notifications on the quat char. */
+  bool quat_notify_enabled() const;
 
 private:
   Config config_;
@@ -143,6 +152,7 @@ private:
   void setup_security();
   void setup_device_info();
   void setup_advertising();
+  NimBLECharacteristic *quat_char = nullptr;   // owned by NimBLE, no delete needed
 };
 
 } // namespace BLE

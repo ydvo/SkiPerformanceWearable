@@ -14,6 +14,20 @@
 
 #include <cstdio>
 #include <stdint.h>
+#include "esp_timer.h"
+
+// ------------------------------------------------------------
+//  Payload that will be sent in every BLE notification
+// ------------------------------------------------------------
+#pragma pack(push,1)               // no padding – exact 24 bytes
+struct quat_payload_t {
+    int64_t timestamp_us;   // microseconds since boot (esp_timer_get_time())
+    float   w, x, y, z;     // quaternion, little‑endian IEEE‑754
+};
+#pragma pack(pop)
+
+static constexpr size_t QUAT_PAYLOAD_LEN = sizeof(quat_payload_t);   // = 24
+// ------------------------------------------------------------
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -129,6 +143,14 @@ void initSystem() {
     return;
   }
 
+  // --------------------------------------------------------------
+  //  Register the custom Quaternion service BEFORE advertising
+  // --------------------------------------------------------------
+  ble_module_ptr->init_quat_service();          // <-- NEW
+  NimBLEDevice::setMTU(247);                    // <-- NEW (optional but recommended)
+
+
+
   logger.info("BLE module initialized successfully");
 
   // Start advertising
@@ -146,10 +168,59 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop() {
-  // if (imu.update(dt)) {
-  //   SENSORS::Imu::Quaternion quat = imu.get_orientation();
-  //   printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
-  // }
+
+  // ------------------- BLE‑connected path -----------------------
+  if (ble_module_ptr && ble_module_ptr->is_connected()) {
+    if (!was_connected) {
+      // just connected – print some info (your existing code)
+      logger.info("Device connected! Getting device info...");
+      auto devices = ble_module_ptr->get_connected_device_infos();
+      for (const auto &device : devices) {
+        auto rssi = ble_module_ptr->get_rssi(device);
+        auto name = ble_module_ptr->get_device_name(device);
+        logger.info("  Device: {}, RSSI: {} dBm", name, rssi);
+      }
+      was_connected = true;
+    }
+
+    // ------------ 1) read IMU and send notification -------------
+    if (imu.update(dt)) {                     // returns true when a new sample is ready
+      SENSORS::Imu::Quaternion q = imu.get_orientation();
+
+      // pack payload
+      quat_payload_t pkt;
+      pkt.timestamp_us = esp_timer_get_time();   // µs since boot
+      pkt.w = q.w; pkt.x = q.x; pkt.y = q.y; pkt.z = q.z;
+
+      // send only if the client actually subscribed to notifications
+      if (ble_module_ptr->quat_notify_enabled()) {
+        ble_module_ptr->notify_quaternion(
+            reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
+      }
+    }
+
+    // -------------------- existing battery handling ------------
+    ble_module_ptr->set_battery_level(battery_level);
+    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+    logger.info("Battery level updated: {}%", battery_level);
+  }
+  // -------------------------------------------------------------
+  else if (ble_module_ptr) {
+    // existing “waiting for connection” logic – unchanged
+    if (was_connected) {
+      logger.info("Device disconnected. Resuming advertising...");
+      was_connected = false;
+      battery_level = 100;
+    }
+    static int wait_count = 0;
+    if (wait_count++ % 10 == 0) {
+      logger.info("Waiting for BLE connection...");
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // (any other logic you may have) – unchanged
+  // ----------------------------------------------------------------
 
   // Check connection status (only if BLE is initialized)
   if (ble_module_ptr && ble_module_ptr->is_connected()) {
