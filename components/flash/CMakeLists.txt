@@ -1,12 +1,10 @@
 idf_component_register(
-    SRCS "src/icm20948.cpp"
+    SRCS "src/flash.cpp" "src/flash_log.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES common
+    REQUIRES common spi_flash espp__logger esp_driver_spi imu
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -std=gnu++17
     -Wall
     -Wextra
-    
 )

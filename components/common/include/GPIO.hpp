@@ -15,7 +15,10 @@ public:
     OUTPUT = GPIO_MODE_OUTPUT,
     INPUT_OUTPUT = GPIO_MODE_INPUT_OUTPUT
   };
-
+  enum Level {
+    ON = 1,
+    OFF = 0,
+  };
   enum Pull {
     NONE = 0,
     PULLUP = GPIO_PULLUP_ONLY,
