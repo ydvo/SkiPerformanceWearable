@@ -1,11 +1,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/ringbuf.h"
 #include "hal/i2c_types.h"
 #include "soc/gpio_num.h"
 #include "driver/spi_common.h"
 
 #include "esp_err.h"
 #include "esp_check.h"
+#include "esp_attr.h"
+#include "esp_timer.h"
 
 #include "GPIO.hpp"
 #include "i2c.hpp"
@@ -15,9 +18,15 @@
 #include "flash.hpp"
 #include "flash_log.hpp"
 
+
 #include <cstdio>
 #include <stdint.h>
 #include <array>
+
+using namespace std::chrono_literals;
+
+static esp_timer_handle_t sensor_timer; 
+constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -61,8 +70,83 @@ STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(
 // IMU
 SENSORS::Imu imu(i2c);
 
-// Filescope Vars
-float dt = 0;
+static TaskHandle_t capture_task_handle = NULL;
+
+static void sensor_timer_cb(void *arg) {
+  BaseType_t hp_task_woken = pdFALSE; 
+  xTaskNotifyFromISR(capture_task_handle, 0, eNoAction, &hp_task_woken); 
+
+  if (hp_task_woken) {
+    portYIELD_FROM_ISR(); 
+  }
+}
+
+/*
+  capture_sensor_data()
+    - updates an IMU
+    - stores quaternion into a flash
+*/
+void capture_sensor_data_task(void *arg) {
+  SENSORS::Imu::Quaternion quat; 
+  bool initialized = false; 
+  std::chrono::system_clock::time_point before;
+  std::chrono::system_clock::time_point now; 
+  int64_t now_timestamp_us; 
+  std::chrono::duration<float> dt; 
+
+  for (;;) {
+    // Wait for a notification from timer
+    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY); 
+    now = std::chrono::system_clock::now();
+    if (!initialized) {
+      before = now; 
+      initialized = true; 
+    } 
+
+    dt = now - before;
+
+    if (imu.update(dt.count())) {
+      quat = imu.get_orientation();
+    } else {
+      ESP_LOGE("SENSOR_CAPTURE", "Failed to update an IMU."); 
+    }
+
+    now_timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      now.time_since_epoch()
+    ).count();
+
+    if (flash_log.append(quat, now_timestamp_us) != ESP_OK) {
+      ESP_LOGE("SENSOR_CAPTURE", "Failed appending to the flash log."); 
+    }
+
+    before = now; 
+  }
+}
+
+/*
+  initTimers()
+    - initialization of sensor timer
+*/
+esp_err_t initTimers() {
+  esp_timer_create_args_t sensor_timer_create_args = {
+    .callback = sensor_timer_cb, 
+    .arg = NULL,
+
+    .name = "sensor_timer", 
+  }; 
+
+  ESP_RETURN_ON_ERROR(
+    esp_timer_create(&sensor_timer_create_args, &sensor_timer), 
+    "TIMER_INIT", "Failed to create a sensor timer."
+  ); 
+
+  ESP_RETURN_ON_ERROR(
+    esp_timer_start_periodic(sensor_timer, sensor_polling_period), 
+    "TIMER_INIT", "Failed to start a sensor timer with %d us period.", sensor_polling_period
+  );
+
+  return ESP_OK; 
+}
 
 /*
  * initSystem()
@@ -133,95 +217,31 @@ esp_err_t initSystem() {
     "SYS_INIT", "Failed to initialize flash log."
   );
 
+  ESP_RETURN_ON_ERROR(
+    initTimers(), 
+    "SYS_INIT", "Failed to initialize timers."
+  ); 
+
   return ESP_OK; 
-}
-
-/*
- * mainLoop
- *  - runs repeatedly, contains update logic
- */
-esp_err_t mainLoop() {
-  static std::array<STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame, 10> frame_read_buf {};
-  static std::array<SENSORS::Imu::Quaternion, 10 * 14> quat_write_buf {};
-  static auto quat_write_ptr = quat_write_buf.begin(); 
-
-  if (imu.update(dt)) {
-    // get timestamp
-    auto now{std::chrono::system_clock::now()};
-    auto timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(); 
-
-    SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    *quat_write_ptr = quat; 
-
-    ESP_RETURN_ON_ERROR(
-      flash_log.append(quat, timestamp_us), 
-      "MAIN_LOOP", "Failed appending to the flash log"
-    ); 
-
-    quat_write_ptr++;
-
-    if (quat_write_ptr == quat_write_buf.end()) {
-      quat_write_ptr = quat_write_buf.begin();
-
-      size_t frames_read; 
-      ESP_RETURN_ON_ERROR(
-        flash_log.read(frame_read_buf.begin(), frame_read_buf.size(), &frames_read), 
-        "MAIN_LOOP", "Failed to read the flash log."
-      );
-
-      logger.info("Read {} frames out of {} frames.", frames_read, frame_read_buf.size()); 
-
-      {
-        auto w_it = quat_write_buf.begin(); 
-        STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frame; 
-        SENSORS::Imu::Quaternion read_quat; 
-        SENSORS::Imu::Quaternion expected_quat;
-
-        for (size_t i = 0; i != frames_read; ++i) {
-          frame = frame_read_buf[i]; 
-          for (size_t j = 0; j != 14; ++j) {
-            read_quat = frame.payload.data[j]; 
-            expected_quat = *w_it; 
-
-            if (
-              read_quat.w != expected_quat.w || 
-              read_quat.x != expected_quat.x || 
-              read_quat.y != expected_quat.y || 
-              read_quat.z != expected_quat.z
-            ) {
-              ESP_LOGI("MAIN_LOOP", "Data mismatch. Expected {w: %0.3f, x: %0.3f, y: %0.3f, z: %0.3f}. Received {w: %0.3f, x: %0.3f, y: %0.3f, z: %0.3f}", 
-                expected_quat.w, expected_quat.x, expected_quat.y, expected_quat.z, read_quat.w, read_quat.x, read_quat.y, read_quat.z); 
-            }
-
-            w_it++; 
-          }
-        }
-      } 
-    }
-
-  }
-
-  return ESP_OK;
 }
 
 /* Application Entry Point */
 extern "C" void app_main() {
   if (initSystem() != ESP_OK) {
-    logger.error("Failed initializing a system."); 
+    logger.error("Failed initializing a system.");
   } // called once
 
-  // Main event loop
+  // Create a task that will capture sensor data
+  xTaskCreate(
+    capture_sensor_data_task, 
+    "capture_sensor_data", 
+    4096, 
+    NULL, 
+    8, 
+    &capture_task_handle
+  );
+
   while (true) {
-    // delay
-    auto now{std::chrono::system_clock::now()};
-    static auto t0{now};
-    auto t1{now};
-    std::chrono::duration<float> dt_ = t1 - t0;
-    dt = dt_.count();
-    t0 = t1;
-
-    mainLoop(); // run repeatedly
-
-    vTaskDelay(pdMS_TO_TICKS(10));
+    std::this_thread::sleep_for(1s); 
   }
 }
