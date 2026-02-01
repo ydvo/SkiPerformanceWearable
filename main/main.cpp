@@ -78,61 +78,9 @@ STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(
 // IMU
 SENSORS::Imu imu(i2c);
 
-static TaskHandle_t capture_task_handle = nullptr;
-
-static Common::GPIO *boot_button = nullptr; 
-
-static void IRAM_ATTR sensor_timer_cb(void *arg) {
-  BaseType_t hp_task_woken = pdFALSE; 
-  xTaskNotifyFromISR(capture_task_handle, 0, eNoAction, &hp_task_woken); 
-
-  if (hp_task_woken) {
-    portYIELD_FROM_ISR(); 
-  }
-}
-
-/*
-  capture_sensor_data()
-    - updates an IMU
-    - stores quaternion into a flash
-*/
-void capture_sensor_data_task(void *arg) {
-  SENSORS::Imu::Quaternion quat; 
-  bool initialized = false; 
-  std::chrono::system_clock::time_point before;
-  std::chrono::system_clock::time_point now; 
-  int64_t now_timestamp_us; 
-  std::chrono::duration<float> dt; 
-
-  for (;;) {
-    // Wait for a notification from timer
-    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY); 
-    now = std::chrono::system_clock::now();
-    if (!initialized) {
-      before = now; 
-      initialized = true; 
-    } 
-
-    dt = now - before;
-
-    if (imu.update(dt.count())) {
-      quat = imu.get_orientation();
-    } else {
-      ESP_LOGE("SENSOR_CAPTURE", "Failed to update an IMU."); 
-    }
-
-    now_timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
-      now.time_since_epoch()
-    ).count();
-
-    if (flash_log.append(quat, now_timestamp_us) != ESP_OK) {
-      ESP_LOGE("SENSOR_CAPTURE", "Failed appending to the flash log."); 
-    }
-
-    before = now; 
-  }
-}
-
+/**
+ * Flushes the flash contents over UART
+ */
 void flush_flash_to_host() {
   STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frames[5]; 
   size_t frames_read;
@@ -160,43 +108,183 @@ void flush_flash_to_host() {
   }
 }
 
-static TaskHandle_t control_task_handle = nullptr; 
+static TaskHandle_t flash_writer_task_handle = nullptr; 
+static TaskHandle_t capture_task_handle = nullptr;
+static TaskHandle_t control_task_handle = nullptr;
 
-static void IRAM_ATTR boot_button_isr(void *arg) {
+constexpr uint32_t NOTIFY_BUTTON_PRESS = (1 << 0); 
+constexpr uint32_t NOTIFY_FLASH_DONE = (1 << 1); 
+
+
+/**
+ * Flash Writer Task
+ */
+RingbufHandle_t flash_writer_buf = nullptr; 
+struct quat_sample_t{
+  SENSORS::Imu::Quaternion quat; 
+  int64_t timestamp_us;
+};
+void flash_writer_task(void *arg) {
+  quat_sample_t *item; 
+  size_t size; 
+
+  for (;;) {
+    item = (quat_sample_t *)xRingbufferReceive(
+      flash_writer_buf, 
+      &size, 
+      pdMS_TO_TICKS(50) // timeout
+    );
+
+    if (item) {
+      if (size != 0 && flash_log.append(item->quat, item->timestamp_us) != ESP_OK) {
+        ESP_LOGE("FLASH_WRITER", "Failed to append quat into flash log."); 
+      }
+
+      vRingbufferReturnItem(flash_writer_buf, item); 
+    }
+
+    if (system_state == system_state_flushing && 
+      xRingbufferGetCurFreeSize(flash_writer_buf) == xRingbufferGetMaxItemSize(flash_writer_buf)
+    ) {
+      xTaskNotify(
+        control_task_handle, 
+        NOTIFY_FLASH_DONE, 
+        eSetBits
+      ); 
+    }
+  }
+}
+
+
+/**
+ * Sensor Capture Task and Timer ISR
+ */ 
+static void IRAM_ATTR sensor_timer_cb(void *arg) {
   BaseType_t hp_task_woken = pdFALSE; 
-  xTaskNotifyFromISR(control_task_handle, 0, eNoAction, &hp_task_woken); 
+  xTaskNotifyFromISR(capture_task_handle, 0, eNoAction, &hp_task_woken); 
 
   if (hp_task_woken) {
     portYIELD_FROM_ISR(); 
   }
 }
+void capture_sensor_data_task(void *arg) {
+  quat_sample_t quat_sample; 
+  bool initialized = false; 
+  std::chrono::system_clock::time_point before;
+  std::chrono::system_clock::time_point now; 
+  int64_t now_timestamp_us; 
+  std::chrono::duration<float> dt; 
 
-void control_task(void *arg) {
   for (;;) {
-    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+    // Wait for a notification from timer
+    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY); 
+    now = std::chrono::system_clock::now();
+    if (!initialized) {
+      before = now; 
+      initialized = true; 
+    } 
 
-    switch (system_state) {
-    case system_state_idle: 
-      system_state = system_state_recording;
-      esp_timer_start_periodic(sensor_timer, sensor_polling_period);
-      break; 
-    case system_state_recording: 
-      system_state = system_state_flushing;
-      esp_timer_stop(sensor_timer); 
-      flush_flash_to_host(); 
-      system_state = system_state_idle; 
-      break; 
-    case system_state_flushing: 
-    default: 
-      break; 
+    dt = now - before;
+
+    if (!imu.update(dt.count())) {
+      ESP_LOGE("SENSOR_CAPTURE", "Failed to update an IMU."); 
+      continue;
+    }
+
+    now_timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      now.time_since_epoch()
+    ).count();
+
+    quat_sample = {
+      .quat = imu.get_orientation(), 
+      .timestamp_us = now_timestamp_us
+    };
+
+    if (xRingbufferSend(
+      flash_writer_buf, 
+      &quat_sample, 
+      sizeof(quat_sample_t), 
+      pdMS_TO_TICKS(2) // wait 2 ms for ring buffer to empty
+    ) == pdFALSE) {
+      ESP_LOGE("SENSOR_CAPTURE", "Failed sending sample to flash writer buffer."); 
+    }
+
+    before = now; 
+  }
+}
+
+/**
+ * Control Task Handle and Button ISR
+ */
+static Common::GPIO *boot_button = nullptr;
+constexpr uint32_t BOOT_BUTTON_DEBOUNCE_MS = 200; 
+
+static void IRAM_ATTR boot_button_isr(void *arg) {
+  BaseType_t hp_task_woken = pdFALSE; 
+  xTaskNotifyFromISR(
+    control_task_handle, 
+    NOTIFY_BUTTON_PRESS, 
+    eSetBits, 
+    &hp_task_woken
+  ); 
+
+  if (hp_task_woken) {
+    portYIELD_FROM_ISR(); 
+  }
+}
+void control_task(void *arg) {
+  uint32_t notify_val; 
+  uint32_t last_button_tick = xTaskGetTickCount();
+
+  for (;;) {
+    xTaskNotifyWait(
+      0, 
+      UINT32_MAX, 
+      &notify_val, 
+      portMAX_DELAY
+    );
+
+    // Button event
+    if (notify_val & NOTIFY_BUTTON_PRESS) {
+      uint32_t now = xTaskGetTickCount(); 
+      uint32_t elapsed_ms = (now - last_button_tick) * portTICK_PERIOD_MS; 
+
+      if (elapsed_ms < BOOT_BUTTON_DEBOUNCE_MS) {
+        ESP_LOGD("CONTROL", "Button bounce ignored"); 
+        continue; 
+      }
+
+      last_button_tick = now; 
+
+      switch (system_state) {
+      case system_state_idle: 
+        ESP_LOGI("CONTROL", "IDLE -> RECORDING"); 
+        system_state = system_state_recording; 
+        esp_timer_start_periodic(sensor_timer, sensor_polling_period); 
+        break; 
+      case system_state_recording: 
+        ESP_LOGI("CONTROL", "RECORDING -> FLUSHING"); 
+        system_state = system_state_flushing; 
+        esp_timer_stop(sensor_timer);
+      default: 
+        break;
+      }
+    }
+
+    // Flash done event
+    if (notify_val & NOTIFY_FLASH_DONE) {
+      if (system_state == system_state_flushing) {
+        flush_flash_to_host();
+        ESP_LOGI("CONTROL", "FLUSHING -> IDLE"); 
+        system_state = system_state_idle; 
+      }
     }
   }
 }
 
-/*
-  initTimers()
-    - initialization of sensor timer
-*/
+/**
+ * Initialization of the timers
+ */
 esp_err_t initTimers() {
   esp_timer_create_args_t sensor_timer_create_args = {
     .callback = sensor_timer_cb, 
@@ -296,6 +384,16 @@ esp_err_t initSystem() {
     "SYS_INIT", "Failed to initialize timers."
   ); 
 
+  flash_writer_buf = xRingbufferCreate(
+    32 * sizeof(quat_sample_t), 
+    RINGBUF_TYPE_NOSPLIT
+  );
+
+  if (flash_writer_buf == nullptr) {
+    ESP_LOGE("SYS_INIT", "Failed to create flash writer buffer."); 
+    return ESP_ERR_INVALID_STATE;
+  }
+
   return ESP_OK; 
 }
 
@@ -304,6 +402,16 @@ extern "C" void app_main() {
   if (initSystem() != ESP_OK) {
     logger.error("Failed initializing a system.");
   } // called once
+
+  // Create a task that will write samples to the flash
+  xTaskCreate(
+    flash_writer_task, 
+    "flash_writer", 
+    4096, 
+    NULL, 
+    3, 
+    &flash_writer_task_handle
+  );
 
   // Create a task that will capture sensor data
   xTaskCreate(
@@ -315,6 +423,7 @@ extern "C" void app_main() {
     &capture_task_handle
   );
 
+  // Create a task that will control program flow
   xTaskCreate(
     control_task, 
     "control", 
