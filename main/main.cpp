@@ -26,7 +26,7 @@
 using namespace std::chrono_literals;
 
 static esp_timer_handle_t sensor_timer; 
-constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
+constexpr uint64_t sensor_polling_period{100000}; // 10 ms = 10_000 us
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -43,6 +43,14 @@ static constexpr auto spi2_mosi {GPIO_NUM_11};
 static constexpr auto spi2_miso {GPIO_NUM_13}; 
 
 static constexpr auto flash_spi_cs {GPIO_NUM_10}; 
+
+typedef enum {
+  system_state_idle, 
+  system_state_recording, 
+  system_state_flushing
+} system_state_t; 
+
+static system_state_t system_state; 
 
 // Logging
 espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
@@ -70,9 +78,11 @@ STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(
 // IMU
 SENSORS::Imu imu(i2c);
 
-static TaskHandle_t capture_task_handle = NULL;
+static TaskHandle_t capture_task_handle = nullptr;
 
-static void sensor_timer_cb(void *arg) {
+static Common::GPIO *boot_button = nullptr; 
+
+static void IRAM_ATTR sensor_timer_cb(void *arg) {
   BaseType_t hp_task_woken = pdFALSE; 
   xTaskNotifyFromISR(capture_task_handle, 0, eNoAction, &hp_task_woken); 
 
@@ -123,6 +133,66 @@ void capture_sensor_data_task(void *arg) {
   }
 }
 
+void flush_flash_to_host() {
+  STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frames[5]; 
+  size_t frames_read;
+
+  for (;;) {
+    if (flash_log.read(frames, 5, &frames_read) != ESP_OK) {
+      printf("ERROR\n"); 
+      break; 
+    }
+
+    if (frames_read == 0) {
+      printf("END\n"); 
+      break; 
+    }
+
+    for (size_t i = 0; i < frames_read; ++i) {
+      auto &frame = frames[i];
+
+      printf("%lld", frame.payload.start_t_us); 
+      for (int j = 0; j < STORAGE::SAMPLES_PER_FRAME; ++j) {
+        printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data->w, frame.payload.data->x, frame.payload.data->y, frame.payload.data->z);
+      }
+      printf(",%lld\n", frame.payload.end_t_us);
+    }
+  }
+}
+
+static TaskHandle_t control_task_handle = nullptr; 
+
+static void IRAM_ATTR boot_button_isr(void *arg) {
+  BaseType_t hp_task_woken = pdFALSE; 
+  xTaskNotifyFromISR(control_task_handle, 0, eNoAction, &hp_task_woken); 
+
+  if (hp_task_woken) {
+    portYIELD_FROM_ISR(); 
+  }
+}
+
+void control_task(void *arg) {
+  for (;;) {
+    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+    switch (system_state) {
+    case system_state_idle: 
+      system_state = system_state_recording;
+      esp_timer_start_periodic(sensor_timer, sensor_polling_period);
+      break; 
+    case system_state_recording: 
+      system_state = system_state_flushing;
+      esp_timer_stop(sensor_timer); 
+      flush_flash_to_host(); 
+      system_state = system_state_idle; 
+      break; 
+    case system_state_flushing: 
+    default: 
+      break; 
+    }
+  }
+}
+
 /*
   initTimers()
     - initialization of sensor timer
@@ -130,7 +200,7 @@ void capture_sensor_data_task(void *arg) {
 esp_err_t initTimers() {
   esp_timer_create_args_t sensor_timer_create_args = {
     .callback = sensor_timer_cb, 
-    .arg = NULL,
+    .arg = nullptr,
 
     .name = "sensor_timer", 
   }; 
@@ -139,11 +209,6 @@ esp_err_t initTimers() {
     esp_timer_create(&sensor_timer_create_args, &sensor_timer), 
     "TIMER_INIT", "Failed to create a sensor timer."
   ); 
-
-  ESP_RETURN_ON_ERROR(
-    esp_timer_start_periodic(sensor_timer, sensor_polling_period), 
-    "TIMER_INIT", "Failed to start a sensor timer with %d us period.", sensor_polling_period
-  );
 
   return ESP_OK; 
 }
@@ -157,8 +222,17 @@ esp_err_t initSystem() {
 
   // enable QT Stemma Port
   Common::GPIO stemma_qt_power =
-      Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
+    Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
   logger.info("Enabled QT Stemma Port");
+
+  boot_button = 
+    new Common::GPIO(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON, Common::GPIO::PULLUP); 
+  
+  ESP_RETURN_ON_ERROR(
+    boot_button->set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, nullptr), 
+    "SYS_INIT", "Failed to set interrupt for boot button."
+  );
+  logger.info("Enabled Boot Button");
 
   // led
   LED::led red_led = LED::led(LED::RED_LED);
@@ -239,6 +313,15 @@ extern "C" void app_main() {
     NULL, 
     8, 
     &capture_task_handle
+  );
+
+  xTaskCreate(
+    control_task, 
+    "control", 
+    4096, 
+    NULL, 
+    9, 
+    &control_task_handle
   );
 
   while (true) {

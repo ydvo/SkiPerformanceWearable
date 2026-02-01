@@ -25,7 +25,7 @@ GPIO::GPIO(gpio_num_t pin, Direction dir, bool initial_level, Pull pull) : pin_(
   io_conf.pin_bit_mask = 1ULL << pin;
   io_conf.mode = static_cast<gpio_mode_t>(dir);
   io_conf.pull_up_en = (pull == PULLUP) ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
-  io_conf.pull_down_en = (pull == PULLUP) ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
+  io_conf.pull_down_en = (pull == PULLDOWN) ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
   io_conf.intr_type = GPIO_INTR_DISABLE;
 
   // Log error if issues initiliazing
