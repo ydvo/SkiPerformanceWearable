@@ -85,6 +85,8 @@ void flush_flash_to_host() {
   STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frames[5]; 
   size_t frames_read;
 
+  printf("START\n"); 
+
   for (;;) {
     if (flash_log.read(frames, 5, &frames_read) != ESP_OK) {
       printf("ERROR\n"); 
@@ -110,10 +112,14 @@ void flush_flash_to_host() {
 
 static TaskHandle_t flash_writer_task_handle = nullptr; 
 static TaskHandle_t capture_task_handle = nullptr;
+static TaskHandle_t upload_task_handle = nullptr; 
 static TaskHandle_t control_task_handle = nullptr;
 
 constexpr uint32_t NOTIFY_BUTTON_PRESS = (1 << 0); 
 constexpr uint32_t NOTIFY_FLASH_DONE = (1 << 1); 
+constexpr uint32_t NOTIFY_UPLOAD_DONE = (1 << 2); 
+constexpr uint32_t NOTIFY_UPLOAD_UART = (1 << 3); 
+constexpr uint32_t NOTIFY_UPLOAD_BLE = (1 << 4); 
 
 
 /**
@@ -151,6 +157,33 @@ void flash_writer_task(void *arg) {
         NOTIFY_FLASH_DONE, 
         eSetBits
       ); 
+    }
+  }
+}
+
+/**
+ * Upload Task
+ *  - performs data transmission over BLE or flashes over UART
+ *  - can use this to initiate ble transmission
+ */
+
+void upload_task(void *arg) {
+  uint32_t notify_val; 
+
+  for (;;) {
+    xTaskNotifyWait(
+      0, 
+      UINT32_MAX, 
+      &notify_val, 
+      portMAX_DELAY
+    ); 
+
+    if (notify_val & NOTIFY_UPLOAD_UART) {
+      flush_flash_to_host(); 
+    }
+
+    if (notify_val & NOTIFY_UPLOAD_BLE) {
+      // BLE transmission logic
     }
   }
 }
@@ -272,12 +305,19 @@ void control_task(void *arg) {
     }
 
     // Flash done event
-    if (notify_val & NOTIFY_FLASH_DONE) {
-      if (system_state == system_state_flushing) {
-        flush_flash_to_host();
-        ESP_LOGI("CONTROL", "FLUSHING -> IDLE"); 
-        system_state = system_state_idle; 
-      }
+    if (notify_val & NOTIFY_FLASH_DONE && system_state == system_state_flushing) {
+      ESP_LOGI("CONTROL", "Flash write done. Initiating upload over uart."); 
+      xTaskNotify(
+        upload_task_handle, 
+        NOTIFY_UPLOAD_UART, 
+        eSetBits
+      );
+    }
+
+    // Upload done event
+    if (notify_val & NOTIFY_UPLOAD_DONE && system_state == system_state_flushing) {
+      ESP_LOGI("CONTROL", "FLUSHING -> IDLE"); 
+      system_state = system_state_idle;
     }
   }
 }
@@ -432,6 +472,16 @@ extern "C" void app_main() {
     9, 
     &control_task_handle
   );
+
+  // Create a task that will transmit data
+  xTaskCreate(
+    upload_task, 
+    "uplaod", 
+    4096, 
+    NULL, 
+    5, 
+    &upload_task_handle
+  ); 
 
   while (true) {
     std::this_thread::sleep_for(1s); 
