@@ -26,7 +26,7 @@
 using namespace std::chrono_literals;
 
 static esp_timer_handle_t sensor_timer; 
-constexpr uint64_t sensor_polling_period{100000}; // 10 ms = 10_000 us
+constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -47,7 +47,9 @@ static constexpr auto flash_spi_cs {GPIO_NUM_10};
 typedef enum {
   system_state_idle, 
   system_state_recording, 
-  system_state_flushing
+  system_state_complete,
+  system_state_flushing, 
+  system_state_uploading, 
 } system_state_t; 
 
 static system_state_t system_state; 
@@ -84,18 +86,21 @@ SENSORS::Imu imu(i2c);
 void flush_flash_to_host() {
   STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frames[5]; 
   size_t frames_read;
+  uint32_t read_addr = flash_log.read_addr(); 
+  uint32_t start_addr = read_addr; 
 
   printf("START\n"); 
 
   for (;;) {
-    if (flash_log.read(frames, 5, &frames_read) != ESP_OK) {
+    if (flash_log.read_immut(frames, 5, &frames_read, read_addr, &read_addr) != ESP_OK) {
       printf("ERROR\n"); 
       break; 
     }
 
     if (frames_read == 0) {
       printf("END\n"); 
-      break; 
+      printf("Completed reading range 0x%x - 0x%x\n", (unsigned int) start_addr, (unsigned int) (read_addr - 1)); 
+      break;
     }
 
     for (size_t i = 0; i < frames_read; ++i) {
@@ -106,6 +111,8 @@ void flush_flash_to_host() {
         printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data->w, frame.payload.data->x, frame.payload.data->y, frame.payload.data->z);
       }
       printf(",%lld\n", frame.payload.end_t_us);
+      // allow scheduler to run
+      vTaskDelay(1); 
     }
   }
 }
@@ -179,7 +186,12 @@ void upload_task(void *arg) {
     ); 
 
     if (notify_val & NOTIFY_UPLOAD_UART) {
-      flush_flash_to_host(); 
+      flush_flash_to_host();
+      xTaskNotify(
+        control_task_handle, 
+        NOTIFY_UPLOAD_DONE, 
+        eSetBits
+      ); 
     }
 
     if (notify_val & NOTIFY_UPLOAD_BLE) {
@@ -296,9 +308,14 @@ void control_task(void *arg) {
         esp_timer_start_periodic(sensor_timer, sensor_polling_period); 
         break; 
       case system_state_recording: 
-        ESP_LOGI("CONTROL", "RECORDING -> FLUSHING"); 
-        system_state = system_state_flushing; 
+        ESP_LOGI("CONTROL", "RECORDING -> COMPLETE"); 
+        system_state = system_state_complete; 
         esp_timer_stop(sensor_timer);
+        break;
+      case system_state_complete: 
+        ESP_LOGI("CONTROL", "COMPLETE -> FLUSHING"); 
+        system_state = system_state_flushing; 
+        break;
       default: 
         break;
       }
@@ -306,7 +323,8 @@ void control_task(void *arg) {
 
     // Flash done event
     if (notify_val & NOTIFY_FLASH_DONE && system_state == system_state_flushing) {
-      ESP_LOGI("CONTROL", "Flash write done. Initiating upload over uart."); 
+      ESP_LOGI("CONTROL", "FLUSHING -> UPLOADING"); 
+      system_state = system_state_uploading; 
       xTaskNotify(
         upload_task_handle, 
         NOTIFY_UPLOAD_UART, 
@@ -315,9 +333,9 @@ void control_task(void *arg) {
     }
 
     // Upload done event
-    if (notify_val & NOTIFY_UPLOAD_DONE && system_state == system_state_flushing) {
-      ESP_LOGI("CONTROL", "FLUSHING -> IDLE"); 
-      system_state = system_state_idle;
+    if (notify_val & NOTIFY_UPLOAD_DONE && system_state == system_state_uploading) {
+      ESP_LOGI("CONTROL", "UPLOADING -> COMPLETE"); 
+      system_state = system_state_complete;
     }
   }
 }
@@ -476,7 +494,7 @@ extern "C" void app_main() {
   // Create a task that will transmit data
   xTaskCreate(
     upload_task, 
-    "uplaod", 
+    "upload", 
     4096, 
     NULL, 
     5, 
