@@ -108,7 +108,7 @@ void flush_flash_to_host() {
 
       printf("%lld", frame.payload.start_t_us); 
       for (int j = 0; j < STORAGE::SAMPLES_PER_FRAME; ++j) {
-        printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data->w, frame.payload.data->x, frame.payload.data->y, frame.payload.data->z);
+        printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data[j].w, frame.payload.data[j].x, frame.payload.data[j].y, frame.payload.data[j].z);
       }
       printf(",%lld\n", frame.payload.end_t_us);
       // allow scheduler to run

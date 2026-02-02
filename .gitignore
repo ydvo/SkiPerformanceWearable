@@ -20,3 +20,8 @@ managed_components/
 compile_commands.json
 .clangd
 build.clang/
+*.csv
+*.log
+
+!final_dataset/*.csv
+!final_dataset/*.log
