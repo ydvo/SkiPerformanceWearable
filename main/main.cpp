@@ -89,23 +89,30 @@ void flush_flash_to_host() {
   uint32_t read_addr = flash_log.read_addr(); 
   uint32_t start_addr = read_addr; 
 
-  printf("START");
+  printf("START\n");
 
   for (;;) {
     if (flash_log.read_immut(frames, 8, &frames_read, read_addr, &read_addr) != ESP_OK) {
-      printf("\nERROR\n"); 
+      printf("ERROR\n"); 
       break; 
     }
 
     if (frames_read == 0) {
-      printf("\nEND\n"); 
+      printf("END\n"); 
       printf("Completed reading range 0x%x - 0x%x\n", (unsigned int) start_addr, (unsigned int) (read_addr - 1)); 
       break;
     }
-    printf("\nCHUNK %d\n", frames_read * sizeof(frames[0].payload));
-    
+
     for (size_t i = 0; i < frames_read; ++i) {
-      std::fwrite(&frames[i].payload, sizeof(frames[0].payload), 1, stdout);
+      auto &frame = frames[i];
+
+      printf("%lld", frame.payload.start_t_us); 
+      for (int j = 0; j < STORAGE::SAMPLES_PER_FRAME; ++j) {
+        printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data[j].w, frame.payload.data[j].x, frame.payload.data[j].y, frame.payload.data[j].z);
+      }
+      printf(",%lld\n", frame.payload.end_t_us);
+      // allow scheduler to run
+      vTaskDelay(1);
     }
   }
 }
