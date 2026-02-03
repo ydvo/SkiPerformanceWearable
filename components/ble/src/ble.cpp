@@ -151,12 +151,15 @@ void BleModule::set_log_level(espp::Logger::Verbosity level) {
 void BleModule::setup_callbacks() {
   espp::BleGattServer::Callbacks callbacks;
 
-  callbacks.connect_callback = [this](NimBLEConnInfo& conn_info) {
-    logger.info("Device connected");
-    if (config_.on_connect) {
-      config_.on_connect(conn_info);
-    }
-  };
+  callbacks.connect_callback = [this](NimBLEConnInfo &conn) {
+  logger.info("Device connected – checking MTU");
+  // Directly ask the NimBLE device for the active client connection
+ // uint16_t mtu = NimBLEDevice::getClientConnection()->getMTU();
+ // logger.info("Negotiated MTU = %d", mtu);
+  if (config_.on_connect) {
+  config_.on_connect(conn);
+  }
+  }; // Confirm MTU 
 
   callbacks.disconnect_callback = [this](NimBLEConnInfo& conn_info, espp::BleGattServer::DisconnectReason reason) {
     logger.info("Device disconnected: {}", reason);
@@ -230,7 +233,12 @@ void BleModule::setup_advertising() {
   adv_data.setName(config_.device_name);
   adv_data.setAppearance((uint16_t)espp::BleAppearance::GENERIC_COMPUTER);
   adv_data.addTxPower();
-
+  // **NEW** – advertise the Quaternion service UUID
+  // -------------------------------------------------
+  // NimBLEUUID takes a 128‑bit array + length
+  NimBLEUUID quat_svc_uuid(QUAT_SVC_UUID, 16);
+  adv_data.addServiceUUID(quat_svc_uuid);
+  // -------------------------------------------------
   ble_gatt_server_.set_advertisement_data(adv_data);
 
   // Start the GATT server
@@ -261,8 +269,9 @@ void BleModule::init_quat_service()
 
     // 4️⃣  Add the mandatory CCCD descriptor (so the phone can enable/disable)
     quat_char->createDescriptor(
-        NimBLEUUID((uint16_t)0x2902),
-        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    NimBLEUUID((uint16_t)0x2901),                     // User Description
+    NIMBLE_PROPERTY::READ);                          // read‑only
+    quat_char->setValue((uint8_t *)"Quaternion", 10);    // the string that will be shown
 
     svc->start();
 
@@ -274,9 +283,17 @@ void BleModule::init_quat_service()
  * ---------------------------------------------------------------- */
 void BleModule::notify_quaternion(const uint8_t *payload, size_t len)
 {
-    if (!quat_char) return;                // safety guard
+    if (!quat_char) {
+        ESP_LOGW(BLE_TAG, "notify_quaternion() called but quat_char == nullptr");
+        return;
+    }
+
     quat_char->setValue(payload, len);
-    quat_char->notify();                    // false = notification (no ACK)
+    bool ok = quat_char->notify();   // false = notification failed
+    ESP_LOGI(BLE_TAG,
+             "notify_quaternion() → %s (len=%d)",
+             ok ? "OK" : "FAIL",
+             (int)len);
 }
 
 /* ----------------------------------------------------------------

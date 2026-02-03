@@ -185,19 +185,24 @@ void mainLoop() {
 
     // ------------ 1) read IMU and send notification -------------
     if (imu.update(dt)) {                     // returns true when a new sample is ready
-      SENSORS::Imu::Quaternion q = imu.get_orientation();
+    SENSORS::Imu::Quaternion q = imu.get_orientation();
 
-      // pack payload
-      quat_payload_t pkt;
-      pkt.timestamp_us = esp_timer_get_time();   // µs since boot
-      pkt.w = q.w; pkt.x = q.x; pkt.y = q.y; pkt.z = q.z;
+    // pack payload
+    quat_payload_t pkt;
+    pkt.timestamp_us = esp_timer_get_time();   // µs since boot
+    pkt.w = q.w; pkt.x = q.x; pkt.y = q.y; pkt.z = q.z;
 
-      // send only if the client actually subscribed to notifications
-      if (ble_module_ptr->quat_notify_enabled()) {
+    // -------------------------------------------------
+    // 2) only try to send if the client really enabled notifications
+    // -------------------------------------------------
+    if (ble_module_ptr->quat_notify_enabled()) {
+        logger.info("🛰️  Sending quaternion notification (len=%d)", QUAT_PAYLOAD_LEN);
         ble_module_ptr->notify_quaternion(
             reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
-      }
+    } else {
+        logger.warn("❗ Notifications NOT enabled – skipping send");
     }
+}
 
     // -------------------- existing battery handling ------------
     ble_module_ptr->set_battery_level(battery_level);
