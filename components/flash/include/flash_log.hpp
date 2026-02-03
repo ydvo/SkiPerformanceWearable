@@ -1,10 +1,20 @@
 #pragma once
 #include "flash.hpp"
+#include "imu.hpp"
 
 namespace STORAGE {
 
 constexpr uint32_t MAGIC = 0xDEADBEEF;
 constexpr size_t SAMPLES_PER_FRAME = 14; 
+
+struct __attribute__((packed)) Quaternion {
+  float w;
+  float x;
+  float y;
+  float z;
+};
+
+static_assert(sizeof(Quaternion) == 16, "Quaternion must be 16 bytes packed."); 
 
 template <typename T>
 class FlashLog { 

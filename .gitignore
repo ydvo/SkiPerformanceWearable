@@ -22,6 +22,8 @@ compile_commands.json
 build.clang/
 *.csv
 *.log
+*.bin
+*.old
 
 !final_dataset/*.csv
 !final_dataset/*.log

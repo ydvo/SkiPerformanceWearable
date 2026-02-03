@@ -74,7 +74,7 @@ STORAGE::SpiFlashDevice spi_flash ({
 });
 
 // Flash Log
-STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(
+STORAGE::FlashLog<STORAGE::Quaternion> flash_log(
   spi_flash
 );
 // IMU
@@ -84,35 +84,28 @@ SENSORS::Imu imu(i2c);
  * Flushes the flash contents over UART
  */
 void flush_flash_to_host() {
-  STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame frames[5]; 
+  STORAGE::FlashLog<STORAGE::Quaternion>::Frame frames[8]; 
   size_t frames_read;
   uint32_t read_addr = flash_log.read_addr(); 
   uint32_t start_addr = read_addr; 
 
-  printf("START\n"); 
+  printf("START");
 
   for (;;) {
-    if (flash_log.read_immut(frames, 5, &frames_read, read_addr, &read_addr) != ESP_OK) {
-      printf("ERROR\n"); 
+    if (flash_log.read_immut(frames, 8, &frames_read, read_addr, &read_addr) != ESP_OK) {
+      printf("\nERROR\n"); 
       break; 
     }
 
     if (frames_read == 0) {
-      printf("END\n"); 
+      printf("\nEND\n"); 
       printf("Completed reading range 0x%x - 0x%x\n", (unsigned int) start_addr, (unsigned int) (read_addr - 1)); 
       break;
     }
-
+    printf("\nCHUNK %d\n", frames_read * sizeof(frames[0].payload));
+    
     for (size_t i = 0; i < frames_read; ++i) {
-      auto &frame = frames[i];
-
-      printf("%lld", frame.payload.start_t_us); 
-      for (int j = 0; j < STORAGE::SAMPLES_PER_FRAME; ++j) {
-        printf(",%.6f,%.6f,%.6f,%.6f",frame.payload.data[j].w, frame.payload.data[j].x, frame.payload.data[j].y, frame.payload.data[j].z);
-      }
-      printf(",%lld\n", frame.payload.end_t_us);
-      // allow scheduler to run
-      vTaskDelay(1); 
+      std::fwrite(&frames[i].payload, sizeof(frames[0].payload), 1, stdout);
     }
   }
 }
@@ -134,7 +127,7 @@ constexpr uint32_t NOTIFY_UPLOAD_BLE = (1 << 4);
  */
 RingbufHandle_t flash_writer_buf = nullptr; 
 struct quat_sample_t{
-  SENSORS::Imu::Quaternion quat; 
+  STORAGE::Quaternion quat; 
   int64_t timestamp_us;
 };
 void flash_writer_task(void *arg) {
@@ -240,8 +233,10 @@ void capture_sensor_data_task(void *arg) {
       now.time_since_epoch()
     ).count();
 
+    SENSORS::Imu::Quaternion sensor_quat = imu.get_orientation(); 
+
     quat_sample = {
-      .quat = imu.get_orientation(), 
+      .quat = {.w = sensor_quat.w, .x = sensor_quat.x, .y = sensor_quat.y, .z = sensor_quat.z,}, 
       .timestamp_us = now_timestamp_us
     };
 

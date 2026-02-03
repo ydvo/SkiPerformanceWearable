@@ -178,5 +178,6 @@ namespace STORAGE {
 
     return dev_.erase_region(sector, dev_.sector_size()); 
   }
-template class FlashLog<SENSORS::Imu::Quaternion>; 
+
+template class FlashLog<Quaternion>; 
 }
