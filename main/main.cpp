@@ -31,7 +31,7 @@ static constexpr size_t QUAT_PAYLOAD_LEN = sizeof(quat_payload_t);   // = 24
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
-constexpr uint32_t ICM20948_I2C_HZ{400000};
+constexpr uint32_t ICM20948_I2C_HZ{100000};
 
 // i2c pins
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
@@ -76,6 +76,9 @@ void initSystem() {
       Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
   logger.info("Enabled QT Stemma Port");
 
+    // *** ADD THIS: Give IMU time to power up ***
+  vTaskDelay(pdMS_TO_TICKS(100));  // 100ms power-up delay
+
   // led
   LED::led red_led = LED::led(LED::RED_LED);
 
@@ -88,22 +91,22 @@ void initSystem() {
     logger.error("Error initializing i2c");
   }
 
-  // i2c scanner
-  // logger.info("Scanning I2C devices");
-  // std::vector<uint8_t> found_addresses;
-  // for (uint8_t address = 1; address < 128; address++) {
-  //   if (i2c.probe_device(address)) {
-  //     found_addresses.push_back(address);
-  //   }
-  // }
-  // logger.info("Found devices at addresses: {::#02x}", found_addresses);
+  //i2c scanner
+  logger.info("Scanning I2C devices");
+  std::vector<uint8_t> found_addresses;
+  for (uint8_t address = 1; address < 128; address++) {
+    if (i2c.probe_device(address)) {
+      found_addresses.push_back(address);
+    }
+  }
+  logger.info("Found devices at addresses: {::#02x}", found_addresses);
   //
 
   // init imu
   bool imu_initialized = imu.init();
   // ensure imu is configured correctly
 
-  vTaskDelay(pdMS_TO_TICKS(10)); // give imu time to startup before first i2c read
+  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
 
   uint8_t test = imu.get_whoami();
   if (test != 0xEA && !imu_initialized) {
@@ -146,7 +149,7 @@ void initSystem() {
   // --------------------------------------------------------------
   //  Register the custom Quaternion service BEFORE advertising
   // --------------------------------------------------------------
-  ble_module_ptr->init_quat_service();          // <-- NEW
+  //ble_module_ptr->init_quat_service();          // <-- NEW
   NimBLEDevice::setMTU(247);                    // <-- NEW (optional but recommended)
 
 
@@ -168,11 +171,31 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop() {
-
-  // ------------------- BLE‑connected path -----------------------
-  if (ble_module_ptr && ble_module_ptr->is_connected()) {
+  static int loop_count = 0;
+  
+  if (!ble_module_ptr) return;
+  
+  bool is_now_connected = ble_module_ptr->is_connected();
+  
+  // *** ALWAYS try to read IMU ***
+  static SENSORS::Imu::Quaternion last_quat = {1, 0, 0, 0};
+  if (imu.update(dt)) {
+    last_quat = imu.get_orientation();
+    
+    // *** Log IMU every 10 seconds (same as send rate) ***
+    if (loop_count % 100 == 0) {
+      logger.info("📊 IMU: w={:.3f} x={:.3f} y={:.3f} z={:.3f}", 
+                  last_quat.w, last_quat.x, last_quat.y, last_quat.z);
+    }
+  } else {
+    // Still log errors more frequently to catch issues
+    if (loop_count % 100 == 0) {
+      logger.error("❌ IMU update failed");
+    }
+  }
+  
+  if (is_now_connected) {
     if (!was_connected) {
-      // just connected – print some info (your existing code)
       logger.info("Device connected! Getting device info...");
       auto devices = ble_module_ptr->get_connected_device_infos();
       for (const auto &device : devices) {
@@ -182,106 +205,73 @@ void mainLoop() {
       }
       was_connected = true;
     }
-
-    // ------------ 1) read IMU and send notification -------------
-    if (imu.update(dt)) {                     // returns true when a new sample is ready
-    SENSORS::Imu::Quaternion q = imu.get_orientation();
-
-    // pack payload
-    quat_payload_t pkt;
-    pkt.timestamp_us = esp_timer_get_time();   // µs since boot
-    pkt.w = q.w; pkt.x = q.x; pkt.y = q.y; pkt.z = q.z;
-
-    // -------------------------------------------------
-    // 2) only try to send if the client really enabled notifications
-    // -------------------------------------------------
-    if (ble_module_ptr->quat_notify_enabled()) {
-        logger.info("🛰️  Sending quaternion notification (len=%d)", QUAT_PAYLOAD_LEN);
-        ble_module_ptr->notify_quaternion(
-            reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
-    } else {
-        logger.warn("❗ Notifications NOT enabled – skipping send");
+    
+    // *** Send quaternion update every 10 seconds ***
+    if (loop_count % 100 == 0) {
+      // Build packet
+      quat_payload_t pkt;
+      pkt.timestamp_us = esp_timer_get_time();
+      pkt.w = last_quat.w;
+      pkt.x = last_quat.x;
+      pkt.y = last_quat.y;
+      pkt.z = last_quat.z;
+      
+      // Log hex dump
+      const uint8_t *bytes = reinterpret_cast<const uint8_t*>(&pkt);
+      logger.info("📦 Sending quaternion packet (24 bytes):");
+      logger.info("   Timestamp: {} (0x{:016X})", pkt.timestamp_us, pkt.timestamp_us);
+      logger.info("   w: {:.6f} = 0x{:08X}", pkt.w, *reinterpret_cast<const uint32_t*>(&pkt.w));
+      logger.info("   x: {:.6f} = 0x{:08X}", pkt.x, *reinterpret_cast<const uint32_t*>(&pkt.x));
+      logger.info("   y: {:.6f} = 0x{:08X}", pkt.y, *reinterpret_cast<const uint32_t*>(&pkt.y));
+      logger.info("   z: {:.6f} = 0x{:08X}", pkt.z, *reinterpret_cast<const uint32_t*>(&pkt.z));
+      
+      // Full hex dump
+      std::string hex_dump;
+      for (size_t i = 0; i < QUAT_PAYLOAD_LEN; i++) {
+        hex_dump += fmt::format("{:02X} ", bytes[i]);
+        if ((i + 1) % 8 == 0) hex_dump += " ";
+      }
+      logger.info("   Raw hex: {}", hex_dump);
+      
+      // Send it
+      ble_module_ptr->notify_quaternion(
+          reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
     }
-}
-
-    // -------------------- existing battery handling ------------
-    ble_module_ptr->set_battery_level(battery_level);
-    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-    logger.info("Battery level updated: {}%", battery_level);
+    
+    // Battery update every 50 seconds
+    if (loop_count % 500 == 0) {
+      ble_module_ptr->set_battery_level(battery_level);
+      battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+      logger.info("Battery: {}%", battery_level);
+    }
   }
-  // -------------------------------------------------------------
-  else if (ble_module_ptr) {
-    // existing “waiting for connection” logic – unchanged
+  else {
     if (was_connected) {
-      logger.info("Device disconnected. Resuming advertising...");
+      logger.info("Device disconnected");
       was_connected = false;
       battery_level = 100;
     }
-    static int wait_count = 0;
-    if (wait_count++ % 10 == 0) {
+    
+    if (loop_count % 100 == 0) {
       logger.info("Waiting for BLE connection...");
     }
   }
-
-  // ----------------------------------------------------------------
-  // (any other logic you may have) – unchanged
-  // ----------------------------------------------------------------
-
-  // Check connection status (only if BLE is initialized)
-  if (ble_module_ptr && ble_module_ptr->is_connected()) {
-    if (!was_connected) {
-      // Just connected
-      logger.info("Device connected! Getting device info...");
-
-      auto devices = ble_module_ptr->get_connected_device_infos();
-      for (const auto &device : devices) {
-        auto rssi = ble_module_ptr->get_rssi(device);
-        auto name = ble_module_ptr->get_device_name(device);
-        logger.info("  Device: {}, RSSI: {} dBm", name, rssi);
-      }
-
-      was_connected = true;
-    }
-
-    // Update battery level (simulate discharge)
-    ble_module_ptr->set_battery_level(battery_level);
-    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-
-    logger.info("Battery level updated: {}%", battery_level);
-
-  } else if (ble_module_ptr) {
-    if (was_connected) {
-      // Just disconnected
-      logger.info("Device disconnected. Resuming advertising...");
-      was_connected = false;
-      battery_level = 100; // Reset battery for next connection
-    }
-
-    // Not connected - show waiting message periodically
-    static int wait_count = 0;
-    if (wait_count++ % 10 == 0) {
-      logger.info("Waiting for BLE connection...");
-    }
-  }
+  
+  loop_count++;
 }
 
-/* Application Entry Point */
 extern "C" void app_main() {
-  initSystem(); // called once
-
-  // Main event loop
+  initSystem();
+  
+  int64_t last_time_us = esp_timer_get_time();
+  
   while (true) {
-    // delay
-    auto now{std::chrono::system_clock::now()};
-    static auto t0{now};
-    auto t1{now};
-    std::chrono::duration<float> dt_ = t1 - t0;
-    dt = dt_.count();
-    t0 = t1;
-    // logger.info("Elapsed time in float seconds: {}", dt);
-
-    mainLoop(); // run repeatedly
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    int64_t now_us = esp_timer_get_time();
+    dt = (now_us - last_time_us) / 1000000.0f;  // Convert to seconds
+    last_time_us = now_us;
+    
+    mainLoop();
+    
+    vTaskDelay(pdMS_TO_TICKS(100));  // 100ms = 10Hz
   }
 }

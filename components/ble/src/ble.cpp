@@ -38,47 +38,24 @@ BleModule::~BleModule() {
   }
 }
 
-bool BleModule::init() {
-  if (initialized_) {
-    logger.warn("BLE already initialized");
+bool BleModule::init()
+{
+    // ... existing code ...
+    ble_gatt_server_.set_log_level(config_.log_level);
+    setup_callbacks();
+    ble_gatt_server_.init(config_.device_name);
+    ble_gatt_server_.set_advertise_on_disconnect(true);
+    setup_security();
+    ble_gatt_server_.start_services();
+    setup_device_info();
+    
+    // ✅ Create quaternion service BEFORE starting
+    init_quat_service();
+    
+    setup_advertising();
+    initialized_ = true;
+    logger.info("BLE module initialized");
     return true;
-  }
-
-  logger.info("Initializing BLE module: {}", config_.device_name);
-
-  // Set log level
-  ble_gatt_server_.set_log_level(config_.log_level);
-
-  // Setup callbacks
-  setup_callbacks();
-
-  // Initialize the GATT server
-  ble_gatt_server_.init(config_.device_name);
-
-#if !CONFIG_BT_NIMBLE_EXT_ADV
-  // Extended advertisement does not support automatically advertising on disconnect
-  ble_gatt_server_.set_advertise_on_disconnect(true);
-#endif
-
-  // Setup security
-  setup_security();
-
-  // Start services (battery and device info)
-  ble_gatt_server_.start_services();
-
-  // Setup device info
-  setup_device_info();
-
-  // Set initial battery level
-  auto& battery_service = ble_gatt_server_.battery_service();
-  battery_service.set_battery_level(battery_level_);
-
-  // Setup advertising
-  setup_advertising();
-
-  initialized_ = true;
-  logger.info("BLE module initialized successfully");
-  return true;
 }
 
 bool BleModule::start_advertising() {
@@ -255,27 +232,97 @@ void BleModule::setup_advertising() {
  * ---------------------------------------------------------------- */
 void BleModule::init_quat_service()
 {
-    // 1️⃣  Get the NimBLE server that the ESP‑IDF has already created
-    NimBLEServer *pServer = NimBLEDevice::getServer();   // <‑‑ must use getServer()
-
-    // 2️⃣  Create the service on that server
-    NimBLEService *svc = pServer->createService(
-        NimBLEUUID(QUAT_SVC_UUID, 16));
-
-    // 3️⃣  Create a NOTIFY‑only characteristic
+    ESP_LOGI(BLE_TAG, "🚀 init_quat_service() CALLED");
+    
+    NimBLEServer *pServer = NimBLEDevice::getServer();
+    if (!pServer) {
+        ESP_LOGE(BLE_TAG, "❌ getServer() returned NULL!");
+        return;
+    }
+    ESP_LOGI(BLE_TAG, "✅ Got server pointer: %p", pServer);
+    
+    NimBLEUUID svc_uuid(QUAT_SVC_UUID, 16);
+    NimBLEUUID char_uuid(QUAT_CHAR_UUID, 16);
+    
+    ESP_LOGI(BLE_TAG, "📋 Service UUID: %s", svc_uuid.toString().c_str());
+    ESP_LOGI(BLE_TAG, "📋 Char UUID: %s", char_uuid.toString().c_str());
+    
+    ESP_LOGI(BLE_TAG, "Creating service...");
+    NimBLEService *svc = pServer->createService(svc_uuid);
+    if (!svc) {
+        ESP_LOGE(BLE_TAG, "❌ createService() returned NULL!");
+        return;
+    }
+    ESP_LOGI(BLE_TAG, "✅ Service created: %p", svc);
+    
+    ESP_LOGI(BLE_TAG, "Creating characteristic...");
     quat_char = svc->createCharacteristic(
-        NimBLEUUID(QUAT_CHAR_UUID, 16),
-        NIMBLE_PROPERTY::NOTIFY);
-
-    // 4️⃣  Add the mandatory CCCD descriptor (so the phone can enable/disable)
-    quat_char->createDescriptor(
-    NimBLEUUID((uint16_t)0x2901),                     // User Description
-    NIMBLE_PROPERTY::READ);                          // read‑only
-    quat_char->setValue((uint8_t *)"Quaternion", 10);    // the string that will be shown
-
+        char_uuid, 
+        NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
+    );
+    
+    if (!quat_char) {
+        ESP_LOGE(BLE_TAG, "❌ createCharacteristic() returned NULL!");
+        return;
+    }
+    ESP_LOGI(BLE_TAG, "✅ Characteristic created: %p", quat_char);
+    
+    // Set initial value
+    uint8_t dummy[24] = {0};
+    quat_char->setValue(dummy, 24);
+    ESP_LOGI(BLE_TAG, "✅ Set initial value");
+    
+    // CCCD callback class
+    class QuatCCCDCallbacks : public NimBLEDescriptorCallbacks {
+    public:
+        BleModule* parent = nullptr;
+        
+        void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override {
+            uint16_t value = pDescriptor->getValue<uint16_t>();
+            bool enabled = (value & 0x0001) != 0;
+            ESP_LOGI(BLE_TAG, "📱📱📱 CCCD WRITE: 0x%04x -> Notifications %s", 
+                     value, enabled ? "ENABLED ✅✅✅" : "DISABLED ❌");
+            if (parent) {
+                parent->quat_notifications_enabled = enabled;
+            }
+        }
+    };
+    
+    ESP_LOGI(BLE_TAG, "Creating CCCD callbacks...");
+    QuatCCCDCallbacks* cccd_cb = new QuatCCCDCallbacks();
+    cccd_cb->parent = this;
+    ESP_LOGI(BLE_TAG, "✅ CCCD callbacks created");
+    
+    ESP_LOGI(BLE_TAG, "Creating CCCD descriptor...");
+    NimBLEDescriptor *cccd = quat_char->createDescriptor(
+        NimBLEUUID((uint16_t)0x2902),
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
+    );
+    
+    if (!cccd) {
+        ESP_LOGE(BLE_TAG, "❌ createDescriptor(CCCD) returned NULL!");
+        delete cccd_cb;
+        return;
+    }
+    ESP_LOGI(BLE_TAG, "✅ CCCD descriptor created");
+    
+    cccd->setCallbacks(cccd_cb);
+    ESP_LOGI(BLE_TAG, "✅ CCCD callbacks set");
+    
+    // User Description
+    ESP_LOGI(BLE_TAG, "Creating User Description...");
+    NimBLEDescriptor *userDesc = quat_char->createDescriptor(
+        NimBLEUUID((uint16_t)0x2901),
+        NIMBLE_PROPERTY::READ
+    );
+    userDesc->setValue("Quaternion Data");
+    ESP_LOGI(BLE_TAG, "✅ User Description created");
+    
+    ESP_LOGI(BLE_TAG, "Starting service...");
     svc->start();
-
-    ESP_LOGI(BLE_TAG, "Quaternion service/characteristic created");
+    ESP_LOGI(BLE_TAG, "✅✅✅ QUATERNION SERVICE STARTED ✅✅✅");
+    ESP_LOGI(BLE_TAG, "   Service handle: %d", svc->getHandle());
+    ESP_LOGI(BLE_TAG, "   Char handle: %d", quat_char->getHandle());
 }
 
 /* ----------------------------------------------------------------
@@ -284,16 +331,32 @@ void BleModule::init_quat_service()
 void BleModule::notify_quaternion(const uint8_t *payload, size_t len)
 {
     if (!quat_char) {
-        ESP_LOGW(BLE_TAG, "notify_quaternion() called but quat_char == nullptr");
+        ESP_LOGW(BLE_TAG, "❌ quat_char is NULL!");
         return;
     }
-
+    
+    if (!is_connected()) {
+        // Only log occasionally to avoid spam
+        static int not_connected_count = 0;
+        if (not_connected_count++ % 100 == 0) {
+            ESP_LOGW(BLE_TAG, "Not connected");
+        }
+        return;
+    }
+    
+    // *** REMOVED: notification enabled check ***
+    // Just send it regardless
+    
     quat_char->setValue(payload, len);
-    bool ok = quat_char->notify();   // false = notification failed
-    ESP_LOGI(BLE_TAG,
-             "notify_quaternion() → %s (len=%d)",
-             ok ? "OK" : "FAIL",
-             (int)len);
+    bool success = quat_char->notify();
+    
+    // Only log failures or occasionally log success
+    static int send_count = 0;
+    if (!success) {
+        ESP_LOGE(BLE_TAG, "❌ notify() failed!");
+    } else if (send_count++ % 10 == 0) {
+        ESP_LOGI(BLE_TAG, "✅ Quat sent (%d bytes)", (int)len);
+    }
 }
 
 /* ----------------------------------------------------------------
@@ -301,11 +364,7 @@ void BleModule::notify_quaternion(const uint8_t *payload, size_t len)
  * ---------------------------------------------------------------- */
 bool BleModule::quat_notify_enabled() const
 {
-    // The ESP‑IDF NimBLE API does not expose a direct “isSubscribed()”
-    // helper.  For our simple use‑case we only need to know that the
-    // characteristic object exists; calling notify() when nobody is
-    // subscribed is safe – the function will simply return false.
-    return (quat_char != nullptr);
+    return (quat_char != nullptr) && quat_notifications_enabled;
 }
 
 } // namespace BLE

@@ -143,6 +143,8 @@ public:
   bool quat_notify_enabled() const;
 
 private:
+  NimBLECharacteristic *quat_char = nullptr;
+  bool quat_notifications_enabled = false;  // Track subscription state
   Config config_;
   espp::BleGattServer ble_gatt_server_;
   uint8_t battery_level_{100};
@@ -152,7 +154,7 @@ private:
   void setup_security();
   void setup_device_info();
   void setup_advertising();
-  NimBLECharacteristic *quat_char = nullptr;   // owned by NimBLE, no delete needed
+  //NimBLECharacteristic *quat_char = nullptr;   // owned by NimBLE, no delete needed
 };
 
 } // namespace BLE
