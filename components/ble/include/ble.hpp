@@ -10,7 +10,29 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include "imu.hpp"      // for SENSORS::Imu::Quaternion
+#include <cstdint>
 
+/**
+ * 244‑byte bulk frame that fits a 247‑byte MTU.
+ *
+ * Layout (little‑endian):
+ *   0..3    uint32_t  sequence number   (FlashLog::Frame.seq)
+ *   4..11   int64_t   start timestamp  (µs)   – Frame.payload.start_t_us
+ *   12..19  int64_t   end   timestamp  (µs)   – Frame.payload.end_t_us
+ *   20..243 14 × Quaternion (w,x,y,z as float = 16 B each)
+ *
+ * Total = 4 + 8 + 8 + (14×16) = 244 bytes.
+ */
+struct bulk_frame_t {
+    uint32_t seq;                           // flash frame sequence number
+    int64_t  start_us;                      // start timestamp from payload
+    int64_t  end_us;                        // end   timestamp from payload
+    SENSORS::Imu::Quaternion quats[14];     // 14 samples, 16 B each
+} __attribute__((packed));
+
+static_assert(sizeof(bulk_frame_t) == 244,
+              "Bulk frame must be exactly 244 bytes for BLE MTU 247");
 namespace BLE {
 
 /* BLE Module Class */
@@ -168,6 +190,17 @@ private:
   void setup_security();
   void setup_device_info();
   void setup_advertising();
+  #pragma pack(push,1)            // force 1‑byte alignment for the whole struct
+struct bulk_frame_t {
+    uint32_t seq;                           // flash‑log frame sequence number
+    int64_t  start_us;                      // payload.start_t_us
+    int64_t  end_us;                        // payload.end_t_us
+    SENSORS::Imu::Quaternion quats[14];     // 14 samples, 16 B each
+};
+#pragma pack(pop)
+
+static_assert(sizeof(bulk_frame_t) == 244,
+              "bulk_frame_t must be exactly 244 bytes for MTU 247");
 };
 
 } // namespace BLE

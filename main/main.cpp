@@ -5,16 +5,22 @@
 
 #include "esp_err.h"
 
+#include "imu.hpp"       // ← Move this FIRST (before ble.hpp)
+#include "flash_log.hpp" // ← Also early
 #include "GPIO.hpp"
 #include "i2c.hpp"
-#include "imu.hpp"
 #include "led.hpp"
 #include "logger.hpp"
-#include "ble.hpp"
+#include "ble.hpp"       // ← Move this AFTER imu.hpp
 
 #include <cstdio>
 #include <stdint.h>
 #include "esp_timer.h"
+
+// ---------------------------------------------------------------------
+//  Flash‑log (defined elsewhere in the project)
+// ---------------------------------------------------------------------
+extern STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log;
 
 // ------------------------------------------------------------
 //  Payload that will be sent in every BLE notification
@@ -171,123 +177,181 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop() {
-  static int64_t last_send_time_us = 0;
-  static int64_t last_timeout_check_us = 0;
-  const int64_t TIMEOUT_US = 30000000;  // 30 seconds
-  
+  // --------------------------------------------------------------
+  //  Timing / state helpers (unchanged from your previous code)
+  // --------------------------------------------------------------
+  static int64_t last_send_time_us       = 0;
+  static int64_t last_state_log_us       = 0;
+  static int64_t last_battery_update_us  = 0;
+  static int64_t last_waiting_log_us     = 0;
+  const int64_t ACK_TIMEOUT_US = 30'000'000;   // 30 s
+
   if (!ble_module_ptr) {
     logger.error("❌ ble_module_ptr is NULL!");
     return;
   }
-  
+
   int64_t now_us = esp_timer_get_time();
-  bool is_now_connected = ble_module_ptr->is_connected();
-  
-  // *** ALWAYS read IMU ***
+  bool    is_connected = ble_module_ptr->is_connected();
+
+  // --------------------------------------------------------------
+  //  1️⃣  Always read the live IMU (keeps orientation fresh)
+  // --------------------------------------------------------------
   static SENSORS::Imu::Quaternion last_quat = {1, 0, 0, 0};
   if (imu.update(dt)) {
     last_quat = imu.get_orientation();
   } else {
-    static int64_t last_imu_error_log = 0;
-    if (now_us - last_imu_error_log >= 10000000) {  // Every 10s
-      last_imu_error_log = now_us;
+    static int64_t last_imu_err_us = 0;
+    if (now_us - last_imu_err_us >= 10'000'000) {   // every 10 s
+      last_imu_err_us = now_us;
       logger.error("❌ IMU update failed");
     }
   }
-  
-  if (is_now_connected) {
-    // Just connected?
+
+  // --------------------------------------------------------------
+  //  2️⃣  Connection handling
+  // --------------------------------------------------------------
+  if (is_connected) {
     if (!was_connected) {
-      logger.info("✅ Device connected! Getting device info...");
-      auto devices = ble_module_ptr->get_connected_device_infos();
-      for (const auto &device : devices) {
-        auto rssi = ble_module_ptr->get_rssi(device);
-        auto name = ble_module_ptr->get_device_name(device);
-        logger.info("  📱 Device: {}, RSSI: {} dBm", name, rssi);
+      logger.info("✅ Device connected! Getting device info…");
+      auto devs = ble_module_ptr->get_connected_device_infos();
+      for (const auto &d : devs) {
+        logger.info("  📱 Device: {}, RSSI: {} dBm",
+                    ble_module_ptr->get_device_name(d),
+                    ble_module_ptr->get_rssi(d));
       }
       was_connected = true;
-      ble_module_ptr->reset_ack_on_connect();
+      ble_module_ptr->reset_ack_on_connect();   // first‑send flag = true, ack = false
       last_send_time_us = now_us;
-      last_timeout_check_us = now_us;
-      logger.info("🔄 ACK state reset for new connection");
     }
-    
-    // Check if we can send (ACK received or first send)
+
+    // --------------------------------------------------------------
+    //  3️⃣  ACK / timeout handling
+    // --------------------------------------------------------------
     bool can_send = ble_module_ptr->is_ack_received();
-    bool timeout_occurred = (now_us - last_send_time_us) >= TIMEOUT_US;
-    
-    // Log state periodically
-    static int64_t last_state_log = 0;
-    if (now_us - last_state_log >= 5000000) {  // Every 5s
-      last_state_log = now_us;
-      int64_t time_since_last_send_s = (now_us - last_send_time_us) / 1000000;
-      
-      if (can_send) {
-        logger.info("✅ Ready to send (ACK received or first send)");
-      } else {
-        logger.info("⏳ Waiting for ACK... ({} seconds since last send)", time_since_last_send_s);
-      }
+    bool timeout  = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
+
+    // --------------------------------------------------------------
+    //  4️⃣  Periodic status logging (every 5 s)
+    // --------------------------------------------------------------
+    if (now_us - last_state_log_us >= 5'000'000) {   // 5 s
+      last_state_log_us = now_us;
+      int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
+      if (can_send)
+        logger.info("✅ Ready to send (ACK received or first‑send pending)");
+      else
+        logger.info("⏳ Waiting for ACK – {} s since last send", secs_since_last);
     }
-    
-    // Send if ACK received OR timeout
-    if (can_send || timeout_occurred) {
-      if (timeout_occurred && !can_send) {
-        logger.warn("⚠️  TIMEOUT: 30s passed with no ACK - sending anyway!");
+
+     // --------------------------------------------------------------
+    //  5️⃣  SEND LOOP – keep sending as long as the phone ACKs
+    // --------------------------------------------------------------
+    while (can_send || timeout) {
+      // ------------------------------------------------------------
+      // 5a) Try to get a full frame from the flash‑log
+      // ------------------------------------------------------------
+      STORAGE::FlashLog<SENSORS::Imu::Quaternion>::Frame flash_frame{};
+      size_t frames_read = 0;
+      esp_err_t err = flash_log.read(&flash_frame, 1, &frames_read);
+
+      if (err != ESP_OK) {
+        ESP_LOGE("MAIN_LOOP", "flash_log.read() failed: %s",
+                 esp_err_to_name(err));
+        // On a flash error we break out of the burst loop – we’ll try again later.
+        break;
       }
-      
-      // Build packet
-      quat_payload_t pkt;
-      pkt.timestamp_us = now_us;
-      pkt.w = last_quat.w;
-      pkt.x = last_quat.x;
-      pkt.y = last_quat.y;
-      pkt.z = last_quat.z;
-      
-      // Log hex dump
-      const uint8_t *bytes = reinterpret_cast<const uint8_t*>(&pkt);
-      logger.info("📦 Sending quaternion packet (24 bytes):");
-      logger.info("   Timestamp: {} (0x{:016X})", pkt.timestamp_us, pkt.timestamp_us);
-      logger.info("   w: {:.6f} x: {:.6f} y: {:.6f} z: {:.6f}", 
-                  pkt.w, pkt.x, pkt.y, pkt.z);
-      
-      std::string hex_dump;
-      for (size_t i = 0; i < QUAT_PAYLOAD_LEN; i++) {
-        hex_dump += fmt::format("{:02X} ", bytes[i]);
-        if ((i + 1) % 8 == 0) hex_dump += " ";
+
+      if (frames_read == 0) {
+        // ------------------------------------------------------------
+        // 5b) No stored frame → fall back to live quaternion.
+        // ------------------------------------------------------------
+        quat_payload_t live_pkt{};
+        live_pkt.timestamp_us = now_us;
+        live_pkt.w = last_quat.w;
+        live_pkt.x = last_quat.x;
+        live_pkt.y = last_quat.y;
+        live_pkt.z = last_quat.z;
+
+        const uint8_t *b = reinterpret_cast<const uint8_t*>(&live_pkt);
+        std::string hex;
+        for (size_t i = 0; i < QUAT_PAYLOAD_LEN; ++i) {
+          hex += fmt::format("{:02X} ", b[i]);
+        }
+        logger.info("📦 Live quaternion (24 B): {}", hex);
+
+        ble_module_ptr->notify_quaternion(
+            reinterpret_cast<const uint8_t*>(&live_pkt), QUAT_PAYLOAD_LEN);
+        ble_module_ptr->reset_ack();               // clear ACK flag
+        last_send_time_us = now_us;
+        break;                                     // Nothing else to send now
       }
-      logger.info("   Raw hex: {}", hex_dump);
-      
-      // Send it
+
+      // ------------------------------------------------------------
+      // 5c) We HAVE a frame – pack it into the 244‑byte bulk payload
+      // ------------------------------------------------------------
+      bulk_frame_t bulk{};
+      bulk.seq      = flash_frame.seq;
+      bulk.start_us = flash_frame.payload.start_t_us;
+      bulk.end_us   = flash_frame.payload.end_t_us;
+      // copy the 14 quaternions (each quaternion = 16 B)
+      memcpy(bulk.quats,
+             flash_frame.payload.data,
+             sizeof(bulk.quats));
+
+      // ------------------------------------------------------------
+      // 5d) Debug print – keep it reasonably short (first 64 B)
+      // ------------------------------------------------------------
+      const uint8_t *buf = reinterpret_cast<const uint8_t*>(&bulk);
+      std::string hex;
+      for (size_t i = 0; i < sizeof(bulk) && i < 64; ++i) {
+        hex += fmt::format("{:02X} ", buf[i]);
+        if ((i + 1) % 16 == 0) hex += "\n";
+      }
+      logger.info("📦 Bulk frame seq {} ({} B) – first 64 B:\n{}",
+                  bulk.seq, sizeof(bulk), hex);
+
+      // ------------------------------------------------------------
+      // 5e) Send the bulk packet (still using the quaternion characteristic)
+      // ------------------------------------------------------------
       ble_module_ptr->notify_quaternion(
-          reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
-      
-      // Reset ACK flag and update timestamp
-      ble_module_ptr->reset_ack();
+          reinterpret_cast<const uint8_t*>(&bulk), sizeof(bulk));
+
+      // ------------------------------------------------------------
+      // 5f) Clean up state for the next iteration
+      // ------------------------------------------------------------
+      ble_module_ptr->reset_ack();               // ready for the next ACK
       last_send_time_us = now_us;
-      
-      logger.info("✉️  Packet sent - waiting for ACK from phone...");
+
+      // ------------------------------------------------------------
+      // 5g) Re‑evaluate the sending condition:
+      //      - If the phone already wrote another ACK, `can_send` becomes true.
+      //      - If we hit the timeout condition we stop after the first burst.
+      // ------------------------------------------------------------
+      can_send = ble_module_ptr->is_ack_received();
+      timeout  = false;   // after a successful burst we don’t want to send again
     }
-    
-    // Battery update every 50 seconds
-    static int64_t last_battery_update = 0;
-    if (now_us - last_battery_update >= 50000000) {
-      last_battery_update = now_us;
+
+    // --------------------------------------------------------------
+    // 6️⃣  Battery update (every 50 s, unchanged)
+    // --------------------------------------------------------------
+    if (now_us - last_battery_update_us >= 50'000'000) {
+      last_battery_update_us = now_us;
       ble_module_ptr->set_battery_level(battery_level);
       battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-      logger.info("🔋 Battery: {}%", battery_level);
+      logger.info("🔋 Battery level: {}%", battery_level);
     }
-  }
-  else {  // NOT CONNECTED
+  } else {
+    // --------------------------------------------------------------
+    // 7️⃣  NOT CONNECTED – clean‑up & periodic waiting log
+    // --------------------------------------------------------------
     if (was_connected) {
-      logger.info("❌ Device disconnected");
+      logger.info("🔌 Device disconnected – resetting state");
       was_connected = false;
       battery_level = 100;
     }
-    
-    static int64_t last_waiting_log = 0;
-    if (now_us - last_waiting_log >= 10000000) {  // Every 10s
-      last_waiting_log = now_us;
-      logger.info("⏳ Waiting for BLE connection...");
+    if (now_us - last_waiting_log_us >= 10'000'000) {   // every 10 s
+      last_waiting_log_us = now_us;
+      logger.info("⏳ Waiting for BLE connection…");
     }
   }
 }
