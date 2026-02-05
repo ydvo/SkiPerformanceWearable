@@ -171,46 +171,73 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop() {
-  static int loop_count = 0;
+  static int64_t last_send_time_us = 0;
+  static int64_t last_timeout_check_us = 0;
+  const int64_t TIMEOUT_US = 30000000;  // 30 seconds
   
-  if (!ble_module_ptr) return;
+  if (!ble_module_ptr) {
+    logger.error("❌ ble_module_ptr is NULL!");
+    return;
+  }
   
+  int64_t now_us = esp_timer_get_time();
   bool is_now_connected = ble_module_ptr->is_connected();
   
-  // *** ALWAYS try to read IMU ***
+  // *** ALWAYS read IMU ***
   static SENSORS::Imu::Quaternion last_quat = {1, 0, 0, 0};
   if (imu.update(dt)) {
     last_quat = imu.get_orientation();
-    
-    // *** Log IMU every 10 seconds (same as send rate) ***
-    if (loop_count % 100 == 0) {
-      logger.info("📊 IMU: w={:.3f} x={:.3f} y={:.3f} z={:.3f}", 
-                  last_quat.w, last_quat.x, last_quat.y, last_quat.z);
-    }
   } else {
-    // Still log errors more frequently to catch issues
-    if (loop_count % 100 == 0) {
+    static int64_t last_imu_error_log = 0;
+    if (now_us - last_imu_error_log >= 10000000) {  // Every 10s
+      last_imu_error_log = now_us;
       logger.error("❌ IMU update failed");
     }
   }
   
   if (is_now_connected) {
+    // Just connected?
     if (!was_connected) {
-      logger.info("Device connected! Getting device info...");
+      logger.info("✅ Device connected! Getting device info...");
       auto devices = ble_module_ptr->get_connected_device_infos();
       for (const auto &device : devices) {
         auto rssi = ble_module_ptr->get_rssi(device);
         auto name = ble_module_ptr->get_device_name(device);
-        logger.info("  Device: {}, RSSI: {} dBm", name, rssi);
+        logger.info("  📱 Device: {}, RSSI: {} dBm", name, rssi);
       }
       was_connected = true;
+      ble_module_ptr->reset_ack_on_connect();
+      last_send_time_us = now_us;
+      last_timeout_check_us = now_us;
+      logger.info("🔄 ACK state reset for new connection");
     }
     
-    // *** Send quaternion update every 10 seconds ***
-    if (loop_count % 100 == 0) {
+    // Check if we can send (ACK received or first send)
+    bool can_send = ble_module_ptr->is_ack_received();
+    bool timeout_occurred = (now_us - last_send_time_us) >= TIMEOUT_US;
+    
+    // Log state periodically
+    static int64_t last_state_log = 0;
+    if (now_us - last_state_log >= 5000000) {  // Every 5s
+      last_state_log = now_us;
+      int64_t time_since_last_send_s = (now_us - last_send_time_us) / 1000000;
+      
+      if (can_send) {
+        logger.info("✅ Ready to send (ACK received or first send)");
+      } else {
+        logger.info("⏳ Waiting for ACK... ({} seconds since last send)", time_since_last_send_s);
+      }
+    }
+    
+    // Send if ACK received OR timeout
+    if (can_send || timeout_occurred) {
+      if (timeout_occurred && !can_send) {
+        logger.warn("⚠️  TIMEOUT: 30s passed with no ACK - sending anyway!");
+      }
+      
       // Build packet
       quat_payload_t pkt;
-      pkt.timestamp_us = esp_timer_get_time();
+      pkt.timestamp_us = now_us;
       pkt.w = last_quat.w;
       pkt.x = last_quat.x;
       pkt.y = last_quat.y;
@@ -220,12 +247,9 @@ void mainLoop() {
       const uint8_t *bytes = reinterpret_cast<const uint8_t*>(&pkt);
       logger.info("📦 Sending quaternion packet (24 bytes):");
       logger.info("   Timestamp: {} (0x{:016X})", pkt.timestamp_us, pkt.timestamp_us);
-      logger.info("   w: {:.6f} = 0x{:08X}", pkt.w, *reinterpret_cast<const uint32_t*>(&pkt.w));
-      logger.info("   x: {:.6f} = 0x{:08X}", pkt.x, *reinterpret_cast<const uint32_t*>(&pkt.x));
-      logger.info("   y: {:.6f} = 0x{:08X}", pkt.y, *reinterpret_cast<const uint32_t*>(&pkt.y));
-      logger.info("   z: {:.6f} = 0x{:08X}", pkt.z, *reinterpret_cast<const uint32_t*>(&pkt.z));
+      logger.info("   w: {:.6f} x: {:.6f} y: {:.6f} z: {:.6f}", 
+                  pkt.w, pkt.x, pkt.y, pkt.z);
       
-      // Full hex dump
       std::string hex_dump;
       for (size_t i = 0; i < QUAT_PAYLOAD_LEN; i++) {
         hex_dump += fmt::format("{:02X} ", bytes[i]);
@@ -236,28 +260,36 @@ void mainLoop() {
       // Send it
       ble_module_ptr->notify_quaternion(
           reinterpret_cast<const uint8_t*>(&pkt), QUAT_PAYLOAD_LEN);
+      
+      // Reset ACK flag and update timestamp
+      ble_module_ptr->reset_ack();
+      last_send_time_us = now_us;
+      
+      logger.info("✉️  Packet sent - waiting for ACK from phone...");
     }
     
     // Battery update every 50 seconds
-    if (loop_count % 500 == 0) {
+    static int64_t last_battery_update = 0;
+    if (now_us - last_battery_update >= 50000000) {
+      last_battery_update = now_us;
       ble_module_ptr->set_battery_level(battery_level);
       battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-      logger.info("Battery: {}%", battery_level);
+      logger.info("🔋 Battery: {}%", battery_level);
     }
   }
-  else {
+  else {  // NOT CONNECTED
     if (was_connected) {
-      logger.info("Device disconnected");
+      logger.info("❌ Device disconnected");
       was_connected = false;
       battery_level = 100;
     }
     
-    if (loop_count % 100 == 0) {
-      logger.info("Waiting for BLE connection...");
+    static int64_t last_waiting_log = 0;
+    if (now_us - last_waiting_log >= 10000000) {  // Every 10s
+      last_waiting_log = now_us;
+      logger.info("⏳ Waiting for BLE connection...");
     }
   }
-  
-  loop_count++;
 }
 
 extern "C" void app_main() {

@@ -3,7 +3,6 @@
  * Provides BLE connectivity with battery and device info services
  */
 #pragma once
-
 #include "ble_gatt_server.hpp"
 #include "ble_gatt_server_menu.hpp"
 #include "logger.hpp"
@@ -28,7 +27,7 @@ public:
     uint8_t init_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     uint8_t resp_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::INFO};
-
+    
     // Device info
     std::string manufacturer_name{"ESP-CPP"};
     std::string model_number{"ski-wearable-01"};
@@ -36,13 +35,13 @@ public:
     std::string software_version{"1.0.0"};
     std::string firmware_version{"1.0.0"};
     std::string hardware_version{"1.0.0"};
-
+    
     // PnP ID
     uint8_t vendor_source{0x01};
     uint16_t vendor_id{0xCafe};
     uint16_t product_id{0xFace};
     uint16_t product_version{0x0100};
-
+    
     // Callbacks
     std::function<void(NimBLEConnInfo&)> on_connect;
     std::function<void(NimBLEConnInfo&, espp::BleGattServer::DisconnectReason)> on_disconnect;
@@ -135,16 +134,31 @@ public:
       
   /** Register the custom Quaternion service/characteristic. Call once before advertising. */
   void init_quat_service();
-
-  /** Send a quaternion notification (payload must be 24 bytes). */
+  
+  /** Send a quaternion notification (payload must be 24 bytes). */
   void notify_quaternion(const uint8_t *payload, size_t len);
-
+  
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
+  
+  // *** NEW: ACK-based flow control ***
+  
+  /** Check if ACK was received (or if first send is pending) */
+  bool is_ack_received() const;
+  
+  /** Clear ACK flag after sending (call after notify_quaternion) */
+  void reset_ack();
+  
+  /** Reset state on new connection */
+  void reset_ack_on_connect();
 
 private:
   NimBLECharacteristic *quat_char = nullptr;
-  bool quat_notifications_enabled = false;  // Track subscription state
+  NimBLECharacteristic *ack_char = nullptr;       // NEW: ACK characteristic
+  bool quat_notifications_enabled = false;
+  bool ack_received = false;                      // NEW: ACK received flag
+  bool first_send_pending = false;                // NEW: Auto-send first packet
+  
   Config config_;
   espp::BleGattServer ble_gatt_server_;
   uint8_t battery_level_{100};
@@ -154,7 +168,6 @@ private:
   void setup_security();
   void setup_device_info();
   void setup_advertising();
-  //NimBLECharacteristic *quat_char = nullptr;   // owned by NimBLE, no delete needed
 };
 
 } // namespace BLE

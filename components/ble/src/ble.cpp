@@ -17,6 +17,9 @@ static const uint8_t QUAT_SVC_UUID[16] = {
 static const uint8_t QUAT_CHAR_UUID[16] = {
     0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
     0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf2 };
+    static const uint8_t ACK_CHAR_UUID[16] = {
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
+    0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf3 };  // Note: f3 (different from f2)
 
 namespace BLE {
 
@@ -236,59 +239,77 @@ void BleModule::init_quat_service()
     
     NimBLEServer *pServer = NimBLEDevice::getServer();
     if (!pServer) {
-        ESP_LOGE(BLE_TAG, "❌ getServer() returned NULL!");
+        ESP_LOGE(BLE_TAG, "❌ FATAL: getServer() returned NULL!");
         return;
     }
     ESP_LOGI(BLE_TAG, "✅ Got server pointer: %p", pServer);
     
     NimBLEUUID svc_uuid(QUAT_SVC_UUID, 16);
     NimBLEUUID char_uuid(QUAT_CHAR_UUID, 16);
+    NimBLEUUID ack_uuid(ACK_CHAR_UUID, 16);
     
-    ESP_LOGI(BLE_TAG, "📋 Service UUID: %s", svc_uuid.toString().c_str());
-    ESP_LOGI(BLE_TAG, "📋 Char UUID: %s", char_uuid.toString().c_str());
+    ESP_LOGI(BLE_TAG, "📋 Service UUID:    %s", svc_uuid.toString().c_str());
+    ESP_LOGI(BLE_TAG, "📋 Quat Char UUID:  %s", char_uuid.toString().c_str());
+    ESP_LOGI(BLE_TAG, "📋 ACK Char UUID:   %s", ack_uuid.toString().c_str());
     
+    // Create service
     ESP_LOGI(BLE_TAG, "Creating service...");
     NimBLEService *svc = pServer->createService(svc_uuid);
     if (!svc) {
-        ESP_LOGE(BLE_TAG, "❌ createService() returned NULL!");
+        ESP_LOGE(BLE_TAG, "❌ FATAL: createService() returned NULL!");
         return;
     }
     ESP_LOGI(BLE_TAG, "✅ Service created: %p", svc);
     
-    ESP_LOGI(BLE_TAG, "Creating characteristic...");
+    // ========== QUATERNION CHARACTERISTIC (NOTIFY + READ) ==========
+    ESP_LOGI(BLE_TAG, "Creating quaternion characteristic...");
     quat_char = svc->createCharacteristic(
         char_uuid, 
         NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
     );
     
     if (!quat_char) {
-        ESP_LOGE(BLE_TAG, "❌ createCharacteristic() returned NULL!");
+        ESP_LOGE(BLE_TAG, "❌ FATAL: createCharacteristic(quat) returned NULL!");
         return;
     }
-    ESP_LOGI(BLE_TAG, "✅ Characteristic created: %p", quat_char);
+    ESP_LOGI(BLE_TAG, "✅ Quat characteristic created: %p", quat_char);
     
     // Set initial value
     uint8_t dummy[24] = {0};
     quat_char->setValue(dummy, 24);
-    ESP_LOGI(BLE_TAG, "✅ Set initial value");
+    ESP_LOGI(BLE_TAG, "✅ Quat char: set initial 24-byte value");
     
-    // CCCD callback class
+    // CCCD for quaternion notifications
     class QuatCCCDCallbacks : public NimBLEDescriptorCallbacks {
     public:
         BleModule* parent = nullptr;
         
         void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override {
+            if (!pDescriptor) {
+                ESP_LOGE(BLE_TAG, "❌ CCCD onWrite: NULL descriptor!");
+                return;
+            }
+            
             uint16_t value = pDescriptor->getValue<uint16_t>();
             bool enabled = (value & 0x0001) != 0;
-            ESP_LOGI(BLE_TAG, "📱📱📱 CCCD WRITE: 0x%04x -> Notifications %s", 
-                     value, enabled ? "ENABLED ✅✅✅" : "DISABLED ❌");
+            ESP_LOGI(BLE_TAG, "📱 QUAT CCCD Write: 0x%04x -> Notifications %s", 
+                     value, enabled ? "ENABLED ✅" : "DISABLED ❌");
+            
             if (parent) {
                 parent->quat_notifications_enabled = enabled;
+                
+                if (enabled) {
+                    ESP_LOGI(BLE_TAG, "🎯 Notifications enabled - setting first_send_pending=true");
+                    parent->first_send_pending = true;
+                    parent->ack_received = false;
+                }
+            } else {
+                ESP_LOGE(BLE_TAG, "❌ CCCD callback: parent is NULL!");
             }
         }
     };
     
-    ESP_LOGI(BLE_TAG, "Creating CCCD callbacks...");
+    ESP_LOGI(BLE_TAG, "Creating CCCD callbacks for quat...");
     QuatCCCDCallbacks* cccd_cb = new QuatCCCDCallbacks();
     cccd_cb->parent = this;
     ESP_LOGI(BLE_TAG, "✅ CCCD callbacks created");
@@ -300,7 +321,7 @@ void BleModule::init_quat_service()
     );
     
     if (!cccd) {
-        ESP_LOGE(BLE_TAG, "❌ createDescriptor(CCCD) returned NULL!");
+        ESP_LOGE(BLE_TAG, "❌ FATAL: createDescriptor(CCCD) returned NULL!");
         delete cccd_cb;
         return;
     }
@@ -309,20 +330,96 @@ void BleModule::init_quat_service()
     cccd->setCallbacks(cccd_cb);
     ESP_LOGI(BLE_TAG, "✅ CCCD callbacks set");
     
-    // User Description
-    ESP_LOGI(BLE_TAG, "Creating User Description...");
+    // User Description for quaternion
+    ESP_LOGI(BLE_TAG, "Creating User Description for quat...");
     NimBLEDescriptor *userDesc = quat_char->createDescriptor(
         NimBLEUUID((uint16_t)0x2901),
         NIMBLE_PROPERTY::READ
     );
-    userDesc->setValue("Quaternion Data");
-    ESP_LOGI(BLE_TAG, "✅ User Description created");
+    if (userDesc) {
+        userDesc->setValue("Quaternion Data (NOTIFY)");
+        ESP_LOGI(BLE_TAG, "✅ User Description set");
+    } else {
+        ESP_LOGW(BLE_TAG, "⚠️  Failed to create User Description");
+    }
     
+    // ========== ACK CHARACTERISTIC (WRITE) ==========
+    ESP_LOGI(BLE_TAG, "Creating ACK characteristic...");
+    ack_char = svc->createCharacteristic(
+        ack_uuid,
+        NIMBLE_PROPERTY::WRITE
+    );
+    
+    if (!ack_char) {
+        ESP_LOGE(BLE_TAG, "❌ FATAL: createCharacteristic(ack) returned NULL!");
+        return;
+    }
+    ESP_LOGI(BLE_TAG, "✅ ACK characteristic created: %p", ack_char);
+    
+    // ACK write callback
+    class AckCharCallbacks : public NimBLECharacteristicCallbacks {
+    public:
+        BleModule* parent = nullptr;
+        
+        void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+            if (!pCharacteristic) {
+                ESP_LOGE(BLE_TAG, "❌ ACK onWrite: NULL characteristic!");
+                return;
+            }
+            
+            std::string value = pCharacteristic->getValue();
+            ESP_LOGI(BLE_TAG, "📬 ACK RECEIVED: %d bytes", (int)value.length());
+            
+            // Log hex dump of ACK value
+            if (value.length() > 0) {
+                char hex_str[128] = {0};
+                int pos = 0;
+                for (size_t i = 0; i < value.length() && i < 32; i++) {
+                    pos += snprintf(hex_str + pos, sizeof(hex_str) - pos, 
+                                  "%02X ", (uint8_t)value[i]);
+                }
+                ESP_LOGI(BLE_TAG, "   ACK hex: %s", hex_str);
+            }
+            
+            if (parent) {
+                if (!parent->ack_received) {
+                    parent->ack_received = true;
+                    ESP_LOGI(BLE_TAG, "✅ ACK flag set to TRUE - ready for next send");
+                } else {
+                    ESP_LOGW(BLE_TAG, "⚠️  Duplicate ACK received (already set)");
+                }
+            } else {
+                ESP_LOGE(BLE_TAG, "❌ ACK callback: parent is NULL!");
+            }
+        }
+    };
+    
+    ESP_LOGI(BLE_TAG, "Creating ACK callbacks...");
+    AckCharCallbacks* ack_cb = new AckCharCallbacks();
+    ack_cb->parent = this;
+    ack_char->setCallbacks(ack_cb);
+    ESP_LOGI(BLE_TAG, "✅ ACK callbacks set");
+    
+    // User Description for ACK
+    ESP_LOGI(BLE_TAG, "Creating User Description for ACK...");
+    NimBLEDescriptor *ackUserDesc = ack_char->createDescriptor(
+        NimBLEUUID((uint16_t)0x2901),
+        NIMBLE_PROPERTY::READ
+    );
+    if (ackUserDesc) {
+        ackUserDesc->setValue("Acknowledgment (WRITE any value)");
+        ESP_LOGI(BLE_TAG, "✅ ACK User Description set");
+    } else {
+        ESP_LOGW(BLE_TAG, "⚠️  Failed to create ACK User Description");
+    }
+    
+    // ========== START SERVICE ==========
     ESP_LOGI(BLE_TAG, "Starting service...");
     svc->start();
     ESP_LOGI(BLE_TAG, "✅✅✅ QUATERNION SERVICE STARTED ✅✅✅");
     ESP_LOGI(BLE_TAG, "   Service handle: %d", svc->getHandle());
-    ESP_LOGI(BLE_TAG, "   Char handle: %d", quat_char->getHandle());
+    ESP_LOGI(BLE_TAG, "   Quat char handle: %d", quat_char->getHandle());
+    ESP_LOGI(BLE_TAG, "   ACK char handle: %d", ack_char->getHandle());
 }
 
 /* ----------------------------------------------------------------
@@ -359,12 +456,35 @@ void BleModule::notify_quaternion(const uint8_t *payload, size_t len)
     }
 }
 
-/* ----------------------------------------------------------------
- *  Return true when the client has enabled notifications (CCCD = 0x0001)
- * ---------------------------------------------------------------- */
 bool BleModule::quat_notify_enabled() const
 {
     return (quat_char != nullptr) && quat_notifications_enabled;
+}
+bool BleModule::is_ack_received() const {
+    return ack_received || first_send_pending;
+}
+
+void BleModule::reset_ack() {
+    if (first_send_pending) {
+        ESP_LOGI(BLE_TAG, "🎯 First send completed - clearing first_send_pending flag");
+        first_send_pending = false;
+    }
+    
+    if (ack_received) {
+        ESP_LOGI(BLE_TAG, "🔄 Resetting ACK flag to FALSE - waiting for next ACK");
+        ack_received = false;
+    } else {
+        ESP_LOGW(BLE_TAG, "⚠️  reset_ack() called but ack_received was already FALSE");
+    }
+}
+
+void BleModule::reset_ack_on_connect() {
+    ESP_LOGI(BLE_TAG, "🔌 Connection state reset:");
+    ESP_LOGI(BLE_TAG, "   first_send_pending: %s -> TRUE", first_send_pending ? "true" : "false");
+    ESP_LOGI(BLE_TAG, "   ack_received: %s -> FALSE", ack_received ? "true" : "false");
+    
+    first_send_pending = true;
+    ack_received = false;
 }
 
 } // namespace BLE
