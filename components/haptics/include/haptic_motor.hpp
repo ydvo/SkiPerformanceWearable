@@ -25,8 +25,8 @@ public:
   };
 
   enum class MotorType : uint8_t {
-    ERM = 0x39,  // ERM Mode, 4x Brake factor, Medium Gain, 1.365x Back EMF
-    LRA = 0xB9   // LRA MODE, 4X Brake Factor, Medium Gain, 7.5x Back EMF
+    ERM = 0x39, // ERM Mode, 4x Brake factor, Medium Gain, 1.365x Back EMF
+    LRA = 0xB9  // LRA MODE, 4X Brake Factor, Medium Gain, 7.5x Back EMF
   };
 
   enum class Library : uint8_t {
@@ -75,6 +75,13 @@ public:
     OLP = 0x20,
     VBAT_MONITOR = 0x21,
     LRA_RES_PERIOD = 0x22
+  };
+
+  enum EFFECTS : uint8_t {
+    LONG_BUZZ = 70,
+    DOUBLE_CLICK = 14,
+    SINGLE_CLICK = 1,
+    SHARP_CLICK = 47,
   };
 
   static constexpr uint8_t DEFAULT_ADDRESS{0x5A};
