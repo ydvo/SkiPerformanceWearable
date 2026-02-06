@@ -1,4 +1,23 @@
 dependencies:
+  espp/adc:
+    component_hash: 
+      55afac7bc999d33c947d1ba3bdb57a3628704d6f633c60ee4c7f6c904c7a1c72
+    dependencies:
+    - name: espp/base_component
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: espp/task
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.33
   espp/base_component:
     component_hash: 569d8a4c2520fbb8f9c79ddd772e278506c80099e218599c602a8891bb995bf9
     dependencies:
@@ -184,10 +203,11 @@ dependencies:
       type: idf
     version: 5.5.1
 direct_dependencies:
+- espp/adc
 - espp/filters
 - espp/i2c
 - espp/icm20948
 - idf
-manifest_hash: e780333e7d9733c62601c2665769f52f923fb8bd27e29b46e4a2cc2328a51b57
+manifest_hash: 022ff388234ea147800aa4ec31f1aaa8440e978afb23abcfa5b0c26b7ddf23c0
 target: esp32s3
 version: 2.0.0
