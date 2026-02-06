@@ -307,8 +307,9 @@ void mainLoop() {
         hex += fmt::format("{:02X} ", buf[i]);
         if ((i + 1) % 16 == 0) hex += "\n";
       }
-      logger.info("📦 Bulk frame seq {} ({} B) – first 64 B:\n{}",
-                  bulk.seq, sizeof(bulk), hex);
+      uint32_t seq_copy = bulk.seq;  // Copy to avoid packed field reference issue
+      logger.info("📦 Bulk frame seq {} ({} B) – first 64 B:\n{}",
+          seq_copy, sizeof(bulk), hex);
 
       // ------------------------------------------------------------
       // 5e) Send the bulk packet (still using the quaternion characteristic)

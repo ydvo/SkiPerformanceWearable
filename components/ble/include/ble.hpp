@@ -3,8 +3,11 @@
  * Provides BLE connectivity with battery and device info services
  */
 #pragma once
+#ifdef FSYNC
+#undef FSYNC
+#endif
 #include "ble_gatt_server.hpp"
-#include "ble_gatt_server_menu.hpp"
+
 #include "logger.hpp"
 #include "NimBLEDevice.h"
 #include <string>
@@ -12,7 +15,7 @@
 #include <vector>
 #include "imu.hpp"      // for SENSORS::Imu::Quaternion
 #include <cstdint>
-
+#include "ble_gatt_server_menu.hpp"
 /**
  * 244‑byte bulk frame that fits a 247‑byte MTU.
  *

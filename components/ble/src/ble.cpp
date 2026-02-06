@@ -1,6 +1,10 @@
 /* ble.cpp
  * Implementation of BLE GATT Server module
  */
+// CRITICAL: Undefine FSYNC macro before any includes to avoid conflict with icm20948_detail.hpp
+#ifdef FSYNC
+#undef FSYNC
+#endif
 
 #include "ble.hpp"
 #include "NimBLEDevice.h"

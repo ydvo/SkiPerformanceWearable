@@ -1,3 +1,4 @@
 {
-    "idf.portWin": "COM6"
+    "idf.portWin": "COM6",
+    "idf.currentSetup": "c:\\Espressif\\frameworks\\esp-idf-v5.5.1"
 }
