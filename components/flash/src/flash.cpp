@@ -111,13 +111,14 @@ namespace STORAGE {
   size_t SpiFlashDevice::page_size() const {
     return chip_->page_size; 
   }
-    // ✅ ADD THESE HERE (still inside the namespace, before the closing brace)
+
   // Create the SPI flash device instance
   SpiFlashDevice flash_device({
       .host = SPI2_HOST,
       .cs = GPIO_NUM_10
   });
 
-}
-  // Create the flash log instance
+} // namespace STORAGE
+
+// Create the flash log instance (global scope)
 STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(STORAGE::flash_device);
