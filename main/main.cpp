@@ -107,13 +107,13 @@ bool was_connected = false;
 esp_err_t initSystem() {
     logger.info("Initializing...");
 
-    // Enable QT Stemma Port power
+        // Enable QT Stemma Port power
     Common::GPIO stemma_qt_power =
         Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
     logger.info("Enabled QT Stemma Port");
 
-    // Power-up delay for IMU
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Wait for power to stabilize
+    vTaskDelay(pdMS_TO_TICKS(250));   // 250ms power-up delay
 
     // Initialize LED
     LED::led red_led = LED::led(LED::RED_LED);
@@ -127,6 +127,9 @@ esp_err_t initSystem() {
         return ESP_ERR_INVALID_STATE;
     }
 
+    // Wait after I2C bus init
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     // I2C device scan
     logger.info("Scanning I2C devices");
     std::vector<uint8_t> found_addresses;
@@ -137,18 +140,31 @@ esp_err_t initSystem() {
     }
     logger.info("Found devices at addresses: {::#02x}", found_addresses);
 
-    // Initialize IMU
+    // Wait after I2C scan (scan can disturb the bus)
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Initialize IMU
+    logger.info("Initializing IMU...");
     bool imu_initialized = imu.init();
+    
+    // Wait after IMU init before WHOAMI
+    vTaskDelay(pdMS_TO_TICKS(100));
     
     // Verify IMU
     uint8_t whoami = imu.get_whoami();
-    if (whoami != 0xEA || !imu_initialized) {
+    logger.info("IMU WHOAMI register: 0x{:02X} (expected 0xEA)", whoami);   // ← Better logging
+    
+    if (whoami != 0xEA) {
         logger.error("Failed to initialize IMU (WHOAMI: 0x{:02X})", whoami);
-        return ESP_ERR_INVALID_STATE;
+       // return ESP_ERR_INVALID_STATE;
     }
+    
+    if (!imu_initialized) {
+        logger.error("IMU init() returned false");
+        //return ESP_ERR_INVALID_STATE;
+    }
+    
     logger.info("IMU initialized successfully");
-
     red_led.turn_on();
 
     // Initialize SPI bus for flash
@@ -335,13 +351,21 @@ esp_err_t mainLoop() {
             }
 
             // We have a frame - pack into bulk format
-            bulk_frame_t bulk{};
-            bulk.seq = flash_frame.seq;
-            bulk.start_us = flash_frame.payload.start_t_us;
-            bulk.end_us = flash_frame.payload.end_t_us;
-            memcpy(bulk.quats, flash_frame.payload.data, sizeof(bulk.quats));
+          bulk_frame_t bulk{};
+          bulk.seq = flash_frame.seq;
+          bulk.start_us = flash_frame.payload.start_t_us;
+          bulk.end_us = flash_frame.payload.end_t_us;
 
-            logger.info("📦 Sending bulk frame seq {} (244 B)", bulk.seq);
+// Copy quaternion data element-by-element
+          for (size_t i = 0; i < 14; ++i) {
+            bulk.quats[i].w = flash_frame.payload.data[i].w;
+            bulk.quats[i].x = flash_frame.payload.data[i].x;
+            bulk.quats[i].y = flash_frame.payload.data[i].y;
+            bulk.quats[i].z = flash_frame.payload.data[i].z;
+}
+
+            uint32_t seq_copy = bulk.seq;  // Copy to local variable
+            logger.info("📦 Sending bulk frame seq {} (244 B)", seq_copy);
             ble_module_ptr->notify_quaternion(
                 reinterpret_cast<const uint8_t*>(&bulk), BULK_FRAME_LEN);
 

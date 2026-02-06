@@ -120,5 +120,5 @@ namespace STORAGE {
 
 } // namespace STORAGE
 
-// Create the flash log instance (global scope)
-STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log(STORAGE::flash_device);
+
+extern STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log;
