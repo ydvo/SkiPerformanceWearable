@@ -9,7 +9,7 @@
 #include "freertos/task.h"
 #include "hal/adc_types.h"
 
-using namespace SENSOR;
+using namespace SENSORS;
 
 static const char *TAG = "FSR";
 
