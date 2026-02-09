@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal/adc_types.h"
 #include "hal/i2c_types.h"
 #include "soc/gpio_num.h"
 
@@ -12,8 +13,13 @@
 #include "led.hpp"
 #include "logger.hpp"
 
+#include "fsr.hpp"
+#include "haptic_motor.hpp"
+
 #include <cstdio>
 #include <stdint.h>
+
+/* Constants */
 
 // icm
 constexpr uint8_t ICM20948_ADRESS{0x69};
@@ -23,6 +29,11 @@ constexpr uint32_t ICM20948_I2C_HZ{400000};
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
+
+// fsr pin
+constexpr adc_channel_t fsr_pin{ADC_CHANNEL_4};
+
+/* Components */
 
 // Logging
 espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
@@ -43,6 +54,15 @@ SENSORS::Imu imu(i2c);
 // Power
 POWER::fuelgauge battery(i2c);
 
+// Forse sensor
+SENSORS::fsr pressure_sensor(fsr_pin);
+
+// Haptics
+HAPTICS::DRV2605L haptic(i2c);
+
+/* Flags */
+bool force_sensor_pressed = false;
+
 /*
  * initSystem()
  *  - initialization function, runs once before main loop
@@ -59,6 +79,9 @@ void initSystem() {
   // led
   LED::led red_led = LED::led(LED::RED_LED);
 
+  // turn on led
+  red_led.turn_on();
+
   // create i2c instance
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
@@ -68,22 +91,13 @@ void initSystem() {
     logger.error("Error initializing i2c");
   }
 
-  // i2c scanner
-  // logger.info("Scanning I2C devices");
-  // std::vector<uint8_t> found_addresses;
-  // for (uint8_t address = 1; address < 128; address++) {
-  //   if (i2c.probe_device(address)) {
-  //     found_addresses.push_back(address);
-  //   }
-  // }
-  // logger.info("Found devices at addresses: {::#02x}", found_addresses);
-  //
+  vTaskDelay(pdMS_TO_TICKS(100)); // give i2c time to startup
 
   // init imu
   bool imu_initialized = imu.init();
   // ensure imu is configured correctly
 
-  vTaskDelay(pdMS_TO_TICKS(10)); // give imu time to startup before first i2c read
+  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
 
   uint8_t test = imu.get_whoami();
   if (test != 0xEA && !imu_initialized) {
@@ -92,10 +106,50 @@ void initSystem() {
     logger.info("Imu initialized");
   }
 
-  red_led.turn_on();
-
+  // check if battery is connected
   if (!battery.isDeviceReady())
     logger.error("Could not initialize fuel gauge. Check battery connection");
+
+  // setup force sensor
+  pressure_sensor.set_calibration(0.00f, 2893.5f);
+
+  // Haptic setup
+  if (haptic.init()) {
+
+    // Set to internal trigger mode
+    haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+
+    // Select ERM motor
+    haptic.select_motor(HAPTICS::DRV2605L::MotorType::ERM);
+
+    // Select library
+    haptic.select_library(HAPTICS::DRV2605L::Library::ERM_LIB_A);
+
+    // Set waveform sequence
+    // haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
+    // haptic.set_waveform(1, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
+    // haptic.set_waveform(2, HAPTICS::DRV2605L::EFFECTS::LONG_BUZZ);    // buzz
+    // haptic.set_waveform(3, 0);                                        // End of sequence
+    haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK);
+    haptic.set_waveform(1, 0);
+
+    // Trigger the waveform
+    haptic.go();
+
+    // Set threshold to 50%
+    float threshold = 0.5f;
+    threshold = pressure_sensor.get_baseline() +
+                (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * threshold;
+    pressure_sensor.set_pressure_threshold(threshold);
+
+    // Wait for effect to complete
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    haptic.set_mode(HAPTICS::DRV2605L::Mode::REALTIME_PLAYBACK);
+    haptic.set_realtime_value(0);
+  } else {
+    logger.error("Could not initialize haptics");
+  }
 }
 
 /*
@@ -103,16 +157,30 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop(auto dt) {
-  // if (imu.update(dt)) {
-  //   SENSORS::Imu::Quaternion quat = imu.get_orientation();
-  //   printf("DATA %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z);
-  // }
 
-  float bat_volt = battery.cellVoltage();
-  float bat_percent = battery.cellPercent();
-  float discharge = battery.chargeRate();
+  // check fsr
+  auto force_percent = pressure_sensor.read_percentage();
 
-  printf("Battery state: %0.4fV %0.4f %0.4f per hour\r\n", bat_volt, bat_percent, discharge);
+  // get imu data
+  if (imu.update(dt)) {
+    SENSORS::Imu::Quaternion quat = imu.get_orientation();
+
+    // read from fsr
+
+    printf("DATA %0.4f %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z, force_percent);
+  }
+  // float bat_volt = battery.cellVoltage();
+  // float bat_percent = battery.cellPercent();
+  // float discharge = battery.chargeRate();
+  //
+  // printf("Battery state: %0.4fV %0.4f %0.4f per hour\r\n", bat_volt, bat_percent, discharge);
+
+  // haptic if above threshold
+  if (pressure_sensor.is_pressed()) {
+    haptic.set_realtime_value(127);
+  } else {
+    haptic.set_realtime_value(0);
+  }
 }
 
 /* Application Entry Point */
@@ -132,6 +200,6 @@ extern "C" void app_main() {
 
     mainLoop(dt); // run repeatedly
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
