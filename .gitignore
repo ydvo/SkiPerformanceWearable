@@ -22,3 +22,10 @@ sdkconfig.old
 compile_commands.json
 .clangd
 build.clang/
+*.csv
+*.log
+*.bin
+*.old
+
+!final_dataset/*.csv
+!final_dataset/*.log

@@ -141,10 +141,43 @@ namespace STORAGE {
   }
 
   template <typename T>
+  uint32_t FlashLog<T>::read_addr() const {
+    return read_addr_; 
+  }
+
+  template <typename T>
+  esp_err_t FlashLog<T>::read_immut(Frame *dst, size_t max_frames, size_t *frames_read, uint32_t read_addr_from, uint32_t *read_addr_new) const {
+    *frames_read = 0; 
+    uint32_t read_addr = read_addr_from;
+
+    while (*frames_read < max_frames && read_addr != write_addr_) {
+      Frame frame{}; 
+      ESP_RETURN_ON_ERROR(
+        dev_.read(read_addr, &frame, sizeof(Frame)), 
+        TAG, "Failed to read the flash device."
+      );
+
+      if (!valid(frame)) {
+        read_addr = next_addr(read_addr); 
+        continue;
+      }; 
+
+      dst[*frames_read] = frame; 
+      read_addr = next_addr(read_addr); 
+      (*frames_read)++; 
+    }
+
+    *read_addr_new = read_addr; 
+
+    return ESP_OK; 
+  }
+
+  template <typename T>
   esp_err_t FlashLog<T>::erase_sector(uint32_t addr) {
     uint32_t sector = addr - (addr % dev_.sector_size());
 
     return dev_.erase_region(sector, dev_.sector_size()); 
   }
-template class FlashLog<SENSORS::Imu::Quaternion>; 
+
+template class FlashLog<Quaternion>; 
 }
