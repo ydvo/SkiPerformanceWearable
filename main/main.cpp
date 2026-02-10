@@ -95,7 +95,6 @@ BLE::BleModule *ble_module_ptr = nullptr;
 // State Variables
 float dt = 0;
 uint8_t battery_level = 100;
-bool was_connected = false;
 
 /**
  * Flushes the flash contents over UART
@@ -520,121 +519,21 @@ esp_err_t mainLoop() {
   static int64_t last_state_log_us = 0;
   static int64_t last_battery_update_us = 0;
   static int64_t last_waiting_log_us = 0;
-  static int64_t last_imu_err_us = 0;
+
+  static bool was_connected = false; 
     
   const int64_t ACK_TIMEOUT_US = 30'000'000;  // 30 seconds
 
   if (!ble_module_ptr) {
-    logger.error("❌ ble_module_ptr is NULL!");
+    logger.error("ble_module_ptr is NULL!");
     return ESP_ERR_INVALID_STATE;
   }
 
   int64_t now_us = esp_timer_get_time();
   bool is_connected = ble_module_ptr->is_connected();
-
-  // ---------------------------------------------------------------------
-  //  2️⃣  BLE Connection Handling
-  // ---------------------------------------------------------------------
-  if (is_connected) {
-    if (!was_connected) {
-      logger.info("✅ Device connected! Getting device info…");
-      auto devs = ble_module_ptr->get_connected_device_infos();
-      for (const auto &d : devs) {
-        logger.info("  📱 Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d), ble_module_ptr->get_rssi(d));
-      }
-      was_connected = true;
-      ble_module_ptr->reset_ack_on_connect();
-      last_send_time_us = now_us;
-    }
-
-    // ACK/timeout handling
-    bool can_send = ble_module_ptr->is_ack_received();
-    bool timeout = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
-
-    // Periodic status logging (every 5 seconds)
-    if (now_us - last_state_log_us >= 5'000'000) {
-      last_state_log_us = now_us;
-      int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
-      if (can_send) {
-        logger.info("✅ Ready to send (ACK received or first-send pending)");
-      } else {
-        logger.info("⏳ Waiting for ACK – {} s since last send", secs_since_last);
-      }
-    }
-
-    // ---------------------------------------------------------------------
-    //  3️⃣  SEND LOOP – drain flash when ACK received
-    // ---------------------------------------------------------------------
-    while (can_send || timeout) {
-      // Try to read a frame from flash
-      STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame{};
-      size_t frames_read = 0;
-      esp_err_t err = flash_log.read(&flash_frame, 1, &frames_read);
-      
-      if (err != ESP_OK) {
-        logger.error("❌ flash_log.read() failed: {}", esp_err_to_name(err));
-        break;
-      }
-
-      if (frames_read == 0) {
-        // No stored frames - send live quaternion
-        quat_payload_t live_pkt{};
-        live_pkt.timestamp_us = now_us;
-        live_pkt.w = last_quat.w;
-        live_pkt.x = last_quat.x;
-        live_pkt.y = last_quat.y;
-        live_pkt.z = last_quat.z;
-
-        logger.info("📦 Sending live quaternion (24 B)");
-        ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t*>(&live_pkt), QUAT_PAYLOAD_LEN);
-        
-        ble_module_ptr->reset_ack();
-        last_send_time_us = now_us;
-        break;
-      }
-
-      // We have a frame - pack into bulk format
-      bulk_frame_t bulk{};
-      bulk.seq = flash_frame.seq;
-      bulk.start_us = flash_frame.payload.start_t_us;
-      bulk.end_us = flash_frame.payload.end_t_us;
-
-      // Copy quaternion data element-by-element
-      for (size_t i = 0; i < 14; ++i) {
-        bulk.quats[i].w = flash_frame.payload.data[i].w;
-        bulk.quats[i].x = flash_frame.payload.data[i].x;
-        bulk.quats[i].y = flash_frame.payload.data[i].y;
-        bulk.quats[i].z = flash_frame.payload.data[i].z;
-      }
-
-      uint32_t seq_copy = bulk.seq;  // Copy to local variable
-      logger.info("📦 Sending bulk frame seq {} (244 B)", seq_copy);
-      ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t*>(&bulk), BULK_FRAME_LEN);
-
-      ble_module_ptr->reset_ack();
-      last_send_time_us = now_us;
-
-      // Re-evaluate send condition
-      can_send = ble_module_ptr->is_ack_received();
-      timeout = false;  // Only send one packet per timeout
-    }
-
-    // ---------------------------------------------------------------------
-    //  4️⃣  Battery update (every 50 seconds)
-    // ---------------------------------------------------------------------
-    if (now_us - last_battery_update_us >= 50'000'000) {
-      last_battery_update_us = now_us;
-      ble_module_ptr->set_battery_level(battery_level);
-      battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-      logger.info("🔋 Battery level: {}%", battery_level);
-    }
-
-  } else {
-    // ---------------------------------------------------------------------
-    //  5️⃣  NOT CONNECTED – cleanup & periodic waiting log
-    // ---------------------------------------------------------------------
+  if (!is_connected) {
     if (was_connected) {
-      logger.info("🔌 Device disconnected – resetting state");
+      logger.info("Device disconnected – resetting state");
       was_connected = false;
       battery_level = 100;
     }
@@ -643,6 +542,69 @@ esp_err_t mainLoop() {
       last_waiting_log_us = now_us;
       logger.info("⏳ Waiting for BLE connection…");
     }
+
+    return ESP_OK; 
+  }
+
+  if (!was_connected) {
+    logger.info("Device connected! Getting device info…");
+    auto devs = ble_module_ptr->get_connected_device_infos();
+    for (const auto &d : devs) {
+      logger.info("  📱 Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d), ble_module_ptr->get_rssi(d));
+    }
+    was_connected = true;
+    ble_module_ptr->reset_ack_on_connect();
+    last_send_time_us = now_us;
+  }
+
+  // ACK/timeout handling
+  bool can_send = ble_module_ptr->is_ack_received();
+  bool timeout = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
+
+  // Periodic status logging (every 5 seconds)
+  if (now_us - last_state_log_us >= 5'000'000) {
+    last_state_log_us = now_us;
+    int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
+    if (can_send) {
+      logger.info("Ready to send (ACK received or first-send pending)");
+    } else {
+      logger.info("Waiting for ACK – {} s since last send", secs_since_last);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // SEND LOOP
+  // ---------------------------------------------------------------------
+  while (can_send || timeout) {
+    // We have a frame - pack into bulk format
+    BLE::Frame frame {
+      .header = {
+        .frame_seq = 1,
+        .sample_count = 0,
+        .payload_len = 0,  
+        .flags = 0, 
+      }, 
+      .payload = {}
+    };
+
+    logger.info("Sending bulk frame seq {} (244 B)", (unsigned int) frame.header.frame_seq);
+    ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t*>(&frame), sizeof(frame));
+    ble_module_ptr->reset_ack();
+    last_send_time_us = now_us;
+
+    // Re-evaluate send condition
+    can_send = ble_module_ptr->is_ack_received();
+    timeout = false;
+  }
+
+  // ---------------------------------------------------------------------
+  // Battery update (every 50 seconds)
+  // ---------------------------------------------------------------------
+  if (now_us - last_battery_update_us >= 50'000'000) {
+    last_battery_update_us = now_us;
+    ble_module_ptr->set_battery_level(battery_level);
+    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+    logger.info("🔋 Battery level: {}%", battery_level);
   }
 
   return ESP_OK;

@@ -3,21 +3,12 @@
 #include "esp_log.h"
 #include "esp_check.h"
 
-// -------------------------------------------------------------
-// 128‑bit UUIDs for the custom service / characteristic
-// -------------------------------------------------------------
-static const uint8_t QUAT_SVC_UUID[16] = {
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf1 };
-static const uint8_t QUAT_CHAR_UUID[16] = {
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf2 };
-static const uint8_t ACK_CHAR_UUID[16] = {
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
-  0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf3 };  // Note: f3 (different from f2)
-
 namespace BLE {
   static const char *TAG = "BLE";
+
+  static const NimBLEUUID QUAT_SVC_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f700"}; 
+  static const NimBLEUUID QUAT_CHAR_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f701"}; 
+  static const NimBLEUUID QUAT_ACK_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f702"}; 
 
   static espp::Logger logger({.tag = TAG, .level = espp::Logger::Verbosity::INFO});
 
@@ -89,19 +80,24 @@ namespace BLE {
     return ble_gatt_server_.is_connected();
   }
 
-  void BleModule::set_battery_level(uint8_t level) {
+  esp_err_t BleModule::set_battery_level(uint8_t level) {
+    ESP_RETURN_ON_FALSE(
+      initialized_, ESP_ERR_INVALID_STATE, 
+      TAG, "BLE Module must be initialized to set battery level"
+    );
+
     if (level > 100) {
       logger.warn("Battery level {} exceeds 100%, clamping to 100%", level);
       level = 100;
+      return ESP_ERR_INVALID_ARG; 
     }
 
     battery_level_ = level;
 
-    if (initialized_) {
-      auto& battery_service = ble_gatt_server_.battery_service();
-      battery_service.set_battery_level(battery_level_);
-      logger.debug("Battery level updated to {}%", battery_level_);
-    }
+    auto& battery_service = ble_gatt_server_.battery_service();
+    battery_service.set_battery_level(battery_level_);
+    logger.debug("Battery level updated to {}%", battery_level_);
+    return ESP_OK; 
   }
 
   uint8_t BleModule::get_battery_level() const {
@@ -210,19 +206,38 @@ namespace BLE {
     espp::BleGattServer::AdvertisedData adv_data;
 
     // Set flags for general discoverable mode
-    uint8_t flags = BLE_HS_ADV_F_DISC_GEN;
-    adv_data.setFlags(flags);
-    adv_data.setName(config_.device_name);
-    adv_data.setAppearance((uint16_t)espp::BleAppearance::GENERIC_COMPUTER);
-    adv_data.addTxPower();
+    ESP_RETURN_ON_FALSE(
+      adv_data.setFlags(BLE_HS_ADV_F_DISC_GEN), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to set advertised data flag"
+    );
+    ESP_RETURN_ON_FALSE(
+      adv_data.setName(config_.device_name), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to set advertised data name"
+    ); 
+    ESP_RETURN_ON_FALSE(
+      adv_data.setAppearance((uint16_t) espp::BleAppearance::GENERIC_COMPUTER), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to set advertised data appearance"
+    );
+    ESP_RETURN_ON_FALSE(
+      adv_data.addTxPower(), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to add advertised data tx power"
+    );
 
-    NimBLEUUID quat_svc_uuid(QUAT_SVC_UUID, 16);
-    adv_data.addServiceUUID(quat_svc_uuid);
+    ESP_RETURN_ON_FALSE(
+      adv_data.addServiceUUID(QUAT_SVC_UUID), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to add quaternion service uuid to advertised data"
+    );
+    
     ble_gatt_server_.set_advertisement_data(adv_data);
 
-    ble_gatt_server_.start();
+    ESP_RETURN_ON_FALSE(
+      ble_gatt_server_.start(), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to start ble gatt server"
+    );
 
     logger.debug("Advertising configured");
+
+    return ESP_OK; 
   }
 
   /* ----------------------------------------------------------------
@@ -233,18 +248,14 @@ namespace BLE {
     ESP_RETURN_ON_FALSE(
       pServer != nullptr, ESP_ERR_INVALID_STATE, 
       TAG, "Failed to get server"
-    ); 
-
-    NimBLEUUID svc_uuid(QUAT_SVC_UUID, 16);
-    NimBLEUUID char_uuid(QUAT_CHAR_UUID, 16);
-    NimBLEUUID ack_uuid(ACK_CHAR_UUID, 16);
+    );
 
     logger.info("Service UUID: %s, Quat Char UUID: %s, ACK Char UUID: %s", 
-      svc_uuid.toString().c_str(), char_uuid.toString().c_str(), ack_uuid.toString().c_str()); 
+      QUAT_SVC_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str()); 
 
     logger.info("Creating service...");
     
-    NimBLEService *svc = pServer->createService(svc_uuid);
+    NimBLEService *svc = pServer->createService(QUAT_SVC_UUID);
     ESP_RETURN_ON_FALSE(
       svc != nullptr, ESP_ERR_INVALID_STATE, 
       TAG, "Failed to create service."
@@ -255,7 +266,7 @@ namespace BLE {
     logger.info("Creating quaternion characteristic..."); 
 
     quat_char_ = svc->createCharacteristic(
-      char_uuid, 
+      QUAT_CHAR_UUID, 
       NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
     ); 
 
@@ -269,40 +280,7 @@ namespace BLE {
     uint8_t dummy[24] = {0}; 
     quat_char_->setValue(dummy, 24); 
     logger.info("Quaternion character, set initial 24-byte value"); 
-
-    class QuatCCCDCallbacks: public NimBLEDescriptorCallbacks {
-    public:
-      BleModule* parent = nullptr; 
-
-      void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override {
-        ESP_RETURN_VOID_ON_FALSE(
-          pDescriptor != nullptr, ESP_ERR_INVALID_STATE, 
-          TAG, "Failed CCCD onWrite due to null descriptor"
-        );
-
-        uint16_t value = pDescriptor->getValue<uint16_t>(); 
-        bool enabled = (value & 0x0001) != 0; 
-        logger.info("Quaternion CCCD Write: 0x%04x -> Notifications %s", value, enabled ? "enabled" : "disabled"); 
-
-        ESP_RETURN_VOID_ON_FALSE(
-          parent != nullptr, ESP_ERR_INVALID_STATE, 
-          TAG, "Failed CCCD onWrite due to null parent"
-        );
-
-        parent->quat_notifications_enabled_ = enabled; 
-        if (enabled) {
-          logger.info("Notification enabled"); 
-          parent->first_send_pending_ = true; 
-          parent->ack_received_ = false; 
-        }
-      }
-    }; 
-
-    logger.info("Creating CCCD callbacks for quaternion..."); 
-
-    QuatCCCDCallbacks* cccd_cb = new QuatCCCDCallbacks();
-    cccd_cb->parent = this; 
-    logger.info("CCCD callbacks created"); 
+ 
     logger.info("Creating CCCD desccriptor"); 
 
     NimBLEDescriptor *cccd = quat_char_->createDescriptor(
@@ -310,16 +288,14 @@ namespace BLE {
       NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
     ); 
 
-    // TODO: need to coordinate the deletes at the class level
     if (cccd == nullptr) {
       logger.error("Failed to create cccd descriptor, returned nullptr"); 
-      delete cccd_cb; 
       return ESP_ERR_INVALID_STATE;  
     }
 
     logger.info("CCCD descriptor created");
 
-    cccd->setCallbacks(cccd_cb); 
+    cccd->setCallbacks(&quat_cccd_cb_); 
     logger.info("CCCD callbacks set"); 
 
     logger.info("Creating user descriptor for quaternion"); 
@@ -338,7 +314,7 @@ namespace BLE {
 
     logger.info("Creating ACK characteristic"); 
     ack_char_ = svc->createCharacteristic(
-      ack_uuid, 
+      QUAT_ACK_UUID, 
       NIMBLE_PROPERTY::WRITE
     ); 
 
@@ -348,63 +324,18 @@ namespace BLE {
     ); 
 
     logger.info("ACK characteristic created"); 
-
-    class AckCharCallbacks: public NimBLECharacteristicCallbacks {
-    public: 
-      BleModule* parent = nullptr;
-
-      void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
-        ESP_RETURN_VOID_ON_FALSE(
-          pCharacteristic != nullptr, ESP_ERR_INVALID_STATE, 
-          TAG, "Failed ACK onWrite due to null descriptor"
-        ); 
-
-        std::string value = pCharacteristic->getValue(); 
-        logger.info("ACK Received: %d bytes", value.length()); 
-
-        // // Log hex dump of ACK value
-        // if (value.length() > 0) {
-        //     char hex_str[128] = {0};
-        //     int pos = 0;
-        //     for (size_t i = 0; i < value.length() && i < 32; i++) {
-        //         pos += snprintf(hex_str + pos, sizeof(hex_str) - pos, 
-        //                       "%02X ", (uint8_t)value[i]);
-        //     }
-        //     ESP_LOGI(BLE_TAG, "   ACK hex: %s", hex_str);
-        // }
-
-        ESP_RETURN_VOID_ON_FALSE(
-          parent != nullptr, ESP_ERR_INVALID_STATE, 
-          TAG, "Failed ACK onWrite due to null parent"
-        );
-
-        if (parent->ack_received_) {
-          logger.warn("Duplicate ACK received"); 
-          return;
-        }
-
-        parent->ack_received_ = true; 
-        logger.info("ACK processed succesfully."); 
-      }
-    };
-
-    logger.info("Creating ACK callbacks"); 
-
-    AckCharCallbacks *ack_cb = new AckCharCallbacks(); 
-    ack_cb->parent = this; 
-    ack_char_->setCallbacks(ack_cb); 
+ 
+    ack_char_->setCallbacks(&quat_ack_cb_); 
     logger.info("ACK callbacks set"); 
 
-    logger.info("Creating User Description for ACK..."); 
+    logger.info("Creating User Descriptor for ACK..."); 
     NimBLEDescriptor *ackUserDescriptor = ack_char_->createDescriptor(
       NimBLEUUID((uint16_t)0x2901), 
       NIMBLE_PROPERTY::READ
     );
 
-    // TODO: Get rid of manual delete
     if (ackUserDescriptor == nullptr) {
-      logger.error("Failed to create ack user descriptor, returned nullptr"); 
-      delete ack_cb; 
+      logger.error("Failed to create ack user descriptor, returned nullptr");
       return ESP_ERR_INVALID_STATE; 
     }
 
@@ -460,6 +391,52 @@ namespace BLE {
   void BleModule::reset_ack_on_connect() {
     first_send_pending_ = true;
     ack_received_ = false;
+  }
+
+  void BleModule::QuatCCCDCallbacks::onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) {
+    ESP_RETURN_VOID_ON_FALSE(
+      pDescriptor != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed CCCD onWrite due to null descriptor"
+    );
+
+    uint16_t value = pDescriptor->getValue<uint16_t>(); 
+    bool enabled = (value & 0x0001) != 0; 
+    logger.info("Quaternion CCCD Write: 0x%04x -> Notifications %s", value, enabled ? "enabled" : "disabled"); 
+
+    ESP_RETURN_VOID_ON_FALSE(
+      parent_ != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed CCCD onWrite due to null parent"
+    );
+
+    parent_->quat_notifications_enabled_ = enabled; 
+    if (enabled) {
+      logger.info("Notification enabled"); 
+      parent_->first_send_pending_ = true; 
+      parent_->ack_received_ = false; 
+    }
+  }
+
+  void BleModule::AckCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) {
+    ESP_RETURN_VOID_ON_FALSE(
+      pCharacteristic != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed ACK onWrite due to null descriptor"
+    ); 
+
+    std::string value = pCharacteristic->getValue(); 
+    logger.info("ACK Received: %d bytes", value.length()); 
+
+    ESP_RETURN_VOID_ON_FALSE(
+      parent_ != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed ACK onWrite due to null parent"
+    );
+
+    if (parent_->ack_received_) {
+      logger.warn("Duplicate ACK received"); 
+      return;
+    }
+
+    parent_->ack_received_ = true; 
+    logger.info("ACK processed succesfully."); 
   }
 
 }

@@ -13,6 +13,32 @@
 
 namespace BLE {
 
+constexpr size_t SAMPLES_PER_FRAME = 8; 
+
+struct __attribute__((packed)) FrameHeader {
+  uint16_t frame_seq; 
+  uint16_t sample_count; 
+  uint16_t payload_len; 
+  uint16_t flags; 
+};
+
+struct __attribute__((packed)) FrameSample {
+  uint64_t timestamp; 
+  float w;
+  float x;
+  float y;
+  float z;
+};
+
+struct __attribute__((packed)) Frame {
+  FrameHeader header; 
+  FrameSample payload[SAMPLES_PER_FRAME];
+};
+
+static_assert(sizeof(FrameSample) == 24, "Frame sample expected to be 24 bytes packed.");
+static_assert(sizeof(FrameHeader) == 8, "Frame header expected to be 8 bytes packed."); 
+static_assert(sizeof(Frame) <= 244, "Frame size expected to fit into 1 notify packet.");  
+
 /* BLE Module Class */
 class BleModule {
 public:
@@ -92,7 +118,7 @@ public:
    * @brief Update battery level
    * @param level Battery level (0-100%)
    */
-  void set_battery_level(uint8_t level);
+  esp_err_t set_battery_level(uint8_t level);
 
   /**
    * @brief Get the current battery level
@@ -141,8 +167,6 @@ public:
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
   
-  // *** NEW: ACK-based flow control ***
-  
   /** Check if ACK was received (or if first send is pending) */
   bool is_ack_received() const;
   
@@ -153,11 +177,29 @@ public:
   void reset_ack_on_connect();
 
 private:
+  class QuatCCCDCallbacks: public NimBLEDescriptorCallbacks {
+    BleModule *parent_; 
+  public:
+    explicit QuatCCCDCallbacks(BleModule *parent): parent_(parent) {}; 
+    void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override;
+  }; 
+
+  class AckCharCallbacks: public NimBLECharacteristicCallbacks {
+    BleModule *parent_; 
+  public: 
+    explicit AckCharCallbacks(BleModule *parent): parent_(parent) {}; 
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
+  };
+
   NimBLECharacteristic *quat_char_ = nullptr;
-  NimBLECharacteristic *ack_char_ = nullptr;       // NEW: ACK characteristic
+  NimBLECharacteristic *ack_char_ = nullptr; 
+
+  QuatCCCDCallbacks quat_cccd_cb_ {this}; 
+  AckCharCallbacks quat_ack_cb_ {this}; 
+
   bool quat_notifications_enabled_ = false;
-  bool ack_received_ = false;                      // NEW: ACK received flag
-  bool first_send_pending_ = false;                // NEW: Auto-send first packet
+  bool ack_received_ = false;
+  bool first_send_pending_ = false;
   
   Config config_;
   espp::BleGattServer ble_gatt_server_;
@@ -168,7 +210,6 @@ private:
   void setup_security();
   void setup_device_info();
   esp_err_t setup_advertising();
-
 };
 
 } // namespace BLE
