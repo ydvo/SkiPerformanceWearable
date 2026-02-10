@@ -1,32 +1,16 @@
-/* ble.hpp
- * BLE GATT Server module for Ski Performance Wearable
- * Provides BLE connectivity with battery and device info services
- */
 #pragma once
-#ifdef FSYNC
-#undef FSYNC
-#endif
-#include "ble_gatt_server.hpp"
 
+#include "ble_gatt_server.hpp"
+#include "ble_gatt_server_menu.hpp"
 #include "logger.hpp"
+
 #include "NimBLEDevice.h"
+
 #include <string>
 #include <functional>
 #include <vector>
-//#include "imu.hpp"      // for SENSORS::Imu::Quaternion
 #include <cstdint>
-#include "ble_gatt_server_menu.hpp"
-/**
- * 244‑byte bulk frame that fits a 247‑byte MTU.
- *
- * Layout (little‑endian):
- *   0..3    uint32_t  sequence number   (FlashLog::Frame.seq)
- *   4..11   int64_t   start timestamp  (µs)   – Frame.payload.start_t_us
- *   12..19  int64_t   end   timestamp  (µs)   – Frame.payload.end_t_us
- *   20..243 14 × Quaternion (w,x,y,z as float = 16 B each)
- *
- * Total = 4 + 8 + 8 + (14×16) = 244 bytes.
- */
+
 namespace BLE {
 
 /* BLE Module Class */
@@ -34,7 +18,15 @@ class BleModule {
 public:
   /* Configuration structure */
   struct Config {
+    // Device info
     std::string device_name{"Ski Performance Wearable"};
+    std::string manufacturer_name{"ESP-CPP"};
+    std::string model_number{"ski-wearable-01"};
+    std::string serial_number{"0000000001"};
+    std::string software_version{"1.0.0"};
+    std::string firmware_version{"1.0.0"};
+    std::string hardware_version{"1.0.0"};
+
     bool bonding{true};
     bool mitm{false};
     bool secure_connections{true};
@@ -43,14 +35,6 @@ public:
     uint8_t init_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     uint8_t resp_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::INFO};
-    
-    // Device info
-    std::string manufacturer_name{"ESP-CPP"};
-    std::string model_number{"ski-wearable-01"};
-    std::string serial_number{"0000000001"};
-    std::string software_version{"1.0.0"};
-    std::string firmware_version{"1.0.0"};
-    std::string hardware_version{"1.0.0"};
     
     // PnP ID
     uint8_t vendor_source{0x01};
@@ -84,19 +68,19 @@ public:
    * @brief Initialize the BLE module
    * @return true if successful, false otherwise
    */
-  bool init();
+  esp_err_t init();
 
   /**
    * @brief Start advertising
    * @return true if successful, false otherwise
    */
-  bool start_advertising();
+  esp_err_t start_advertising();
 
   /**
    * @brief Stop advertising
    * @return true if successful, false otherwise
    */
-  bool stop_advertising();
+  esp_err_t stop_advertising();
 
   /**
    * @brief Check if a device is connected
@@ -149,10 +133,10 @@ public:
   void set_log_level(espp::Logger::Verbosity level);
       
   /** Register the custom Quaternion service/characteristic. Call once before advertising. */
-  void init_quat_service();
+  esp_err_t init_quat_service();
   
   /** Send a quaternion notification (payload must be 24 bytes). */
-  void notify_quaternion(const uint8_t *payload, size_t len);
+  esp_err_t notify_quaternion(const uint8_t *payload, size_t len);
   
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
@@ -169,11 +153,11 @@ public:
   void reset_ack_on_connect();
 
 private:
-  NimBLECharacteristic *quat_char = nullptr;
-  NimBLECharacteristic *ack_char = nullptr;       // NEW: ACK characteristic
-  bool quat_notifications_enabled = false;
-  bool ack_received = false;                      // NEW: ACK received flag
-  bool first_send_pending = false;                // NEW: Auto-send first packet
+  NimBLECharacteristic *quat_char_ = nullptr;
+  NimBLECharacteristic *ack_char_ = nullptr;       // NEW: ACK characteristic
+  bool quat_notifications_enabled_ = false;
+  bool ack_received_ = false;                      // NEW: ACK received flag
+  bool first_send_pending_ = false;                // NEW: Auto-send first packet
   
   Config config_;
   espp::BleGattServer ble_gatt_server_;
@@ -183,7 +167,7 @@ private:
   void setup_callbacks();
   void setup_security();
   void setup_device_info();
-  void setup_advertising();
+  esp_err_t setup_advertising();
 
 };
 

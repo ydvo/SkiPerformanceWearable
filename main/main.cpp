@@ -30,31 +30,6 @@ static esp_timer_handle_t sensor_timer;
 constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
 
 // ---------------------------------------------------------------------
-//  BLE Packet Structures
-// ---------------------------------------------------------------------
-
-// 24-byte live quaternion packet
-#pragma pack(push, 1)
-struct quat_payload_t {
-    int64_t timestamp_us;   // microseconds since boot
-    float   w, x, y, z;     // quaternion components
-};
-#pragma pack(pop)
-static constexpr size_t QUAT_PAYLOAD_LEN = sizeof(quat_payload_t);  // = 24
-
-// 244-byte bulk frame packet (for draining flash storage)
-#pragma pack(push, 1)
-struct bulk_frame_t {
-  uint32_t seq;                           // 4 bytes - frame sequence number
-  uint64_t start_us;                      // 8 bytes - timestamp of first sample
-  uint64_t end_us;                        // 8 bytes - timestamp of last sample
-  SENSORS::Imu::Quaternion quats[14];     // 224 bytes (14 × 16 bytes)
-  // Total: 4 + 8 + 8 + 224 = 244 bytes
-};
-#pragma pack(pop)
-static constexpr size_t BULK_FRAME_LEN = sizeof(bulk_frame_t);  // = 244
-
-// ---------------------------------------------------------------------
 //  Hardware Pin Definitions
 // ---------------------------------------------------------------------
 
@@ -408,7 +383,7 @@ esp_err_t initTimers() {
 // ---------------------------------------------------------------------
 
 esp_err_t initSystem() {
-    logger.info("Initializing...");
+  logger.info("Initializing...");
 
   // enable QT Stemma Port
   Common::GPIO stemma_qt_power =
@@ -502,21 +477,20 @@ esp_err_t initSystem() {
 
   // BLE connection callbacks
   ble_config.on_connect = [](NimBLEConnInfo &info) {
-      printf("BLE: Client connected!\n");
+    printf("BLE: Client connected!\n");
   };
-  ble_config.on_disconnect = [](NimBLEConnInfo &info,
-                                  espp::BleGattServer::DisconnectReason reason) {
-      printf("BLE: Client disconnected\n");
+  ble_config.on_disconnect = [](NimBLEConnInfo &info, espp::BleGattServer::DisconnectReason reason) {
+    printf("BLE: Client disconnected\n");
   };
   ble_config.on_authenticated = [](const NimBLEConnInfo &info) {
-      printf("BLE: Client authenticated successfully\n");
+    printf("BLE: Client authenticated successfully\n");
   };
 
   // Create and initialize BLE module
   ble_module_ptr = new BLE::BleModule(ble_config);
   if (!ble_module_ptr->init()) {
-      logger.error("Failed to initialize BLE module");
-      return ESP_ERR_INVALID_STATE;
+    logger.error("Failed to initialize BLE module");
+    return ESP_ERR_INVALID_STATE;
   }
 
   // Set MTU for larger packets
@@ -526,8 +500,8 @@ esp_err_t initSystem() {
 
   // Start advertising
   if (!ble_module_ptr->start_advertising()) {
-      logger.error("Failed to start advertising");
-      return ESP_ERR_INVALID_STATE;
+    logger.error("Failed to start advertising");
+    return ESP_ERR_INVALID_STATE;
   }
 
   logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
@@ -551,48 +525,12 @@ esp_err_t mainLoop() {
   const int64_t ACK_TIMEOUT_US = 30'000'000;  // 30 seconds
 
   if (!ble_module_ptr) {
-      logger.error("❌ ble_module_ptr is NULL!");
-      return ESP_ERR_INVALID_STATE;
+    logger.error("❌ ble_module_ptr is NULL!");
+    return ESP_ERR_INVALID_STATE;
   }
 
   int64_t now_us = esp_timer_get_time();
   bool is_connected = ble_module_ptr->is_connected();
-
-  // ---------------------------------------------------------------------
-  //  1️⃣  Read IMU and write to flash (continuous, regardless of BLE state)
-  // ---------------------------------------------------------------------
-  static STORAGE::Quaternion last_quat = {1, 0, 0, 0};
-    
-  if (imu.update(dt)) {
-    SENSORS::Imu::Quaternion quat = imu.get_orientation(); 
-
-    last_quat = {
-      w: quat.w, 
-      x: quat.x, 
-      y: quat.y, 
-      z: quat.z
-    };
-    
-    // Write to flash log
-    esp_err_t append_result = flash_log.append(last_quat, now_us);
-    if (append_result != ESP_OK) {
-      if (append_result == ESP_ERR_NO_MEM) {
-        // Flash is full - this is expected behavior in circular buffer
-        static int64_t last_full_warning_us = 0;
-        if (now_us - last_full_warning_us >= 10'000'000) {  // Every 10s
-          last_full_warning_us = now_us;
-          logger.warn("⚠️  Flash log full - oldest data will be overwritten");
-        }
-      } else {
-        logger.error("❌ Flash log append failed: {}", esp_err_to_name(append_result));
-      }
-    }
-  } else {
-    if (now_us - last_imu_err_us >= 10'000'000) {  // Every 10 seconds
-      last_imu_err_us = now_us;
-      logger.error("❌ IMU update failed");
-    }
-  }
 
   // ---------------------------------------------------------------------
   //  2️⃣  BLE Connection Handling
