@@ -97,14 +97,14 @@ void initSystem() {
   bool imu_initialized = imu.init();
   // ensure imu is configured correctly
 
-  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
+  vTaskDelay(pdMS_TO_TICKS(500)); // give imu time to startup before first i2c read
 
-  uint8_t test = imu.get_whoami();
-  if (test != 0xEA && !imu_initialized) {
-    logger.error("Could not initialize imu");
-  } else {
+  if (imu.get_whoami() == 0xEA && imu_initialized) {
     logger.info("Imu initialized");
   }
+
+  // // for testing
+  // imu.disable_magnetometer();
 
   // check if battery is connected
   if (!battery.isDeviceReady())

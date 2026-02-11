@@ -4,7 +4,10 @@
 #include "icm20948.hpp"
 #include "icm20948_detail.hpp"
 #include "madgwick_filter_quat.hpp"
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <iterator>
 
 using ICM = espp::Icm20948<espp::icm20948::Interface::I2C>;
 
@@ -30,7 +33,14 @@ public:
       espp::icm20948::MagnetometerMode::CONTINUOUS_MODE_100_HZ;
 
   // Madgwick tuning value
-  static constexpr float MADGWICK_BETA{0.1f}; // default filter beta
+  static constexpr float MADGWICK_BETA{0.5f}; // default filter beta
+
+  // Low Pass Filter Bandwidth
+  static constexpr espp::icm20948::AccelerometerFilterBandwidth ACCEL_LPF_BANDWIDTH{
+      espp::icm20948::AccelerometerFilterBandwidth::BW_24_HZ};
+
+  static constexpr espp::icm20948::GyroscopeFilterBandwidth GYRO_LPF_BANDWIDTH{
+      espp::icm20948::GyroscopeFilterBandwidth::BW_11_HZ};
 
   /* Structs */
   struct Value {
@@ -80,11 +90,45 @@ public:
     return raw_;
   }
 
+  /* Magnetometer */
+
+  // disable magnetometer
+  void disable_magnetometer() {
+    enable_magnetometer_ = false;
+  }
+
+  //  enable magnetometer
+  void enable_magnetometer() {
+    enable_magnetometer_ = true;
+  }
+
+  // set hard iron
+  void set_mag_hard_iron_bias(double b[3]) {
+    memcpy(b_, b, sizeof(&b));
+  }
+
+  // set soft iron
+  void set_mag_soft_iron_bias(double A[3][3]) {
+    memcpy(A_, A, sizeof(&A));
+  }
+
 private:
+  Value apply_mag_cal(espp::icm20948::Value raw); // helper function to apply magnetomer calibration
+
   ICM::Config make_default_config(espp::I2c &i2c);
   ICM imu_;                         // icm20948 instance
   espp::MadgwickFilterQuat filter_; // madgwick filter instance
+  bool enable_magnetometer_;        // Controls if magnetometer is used
   Quaternion orientation_{};        // Filtered orientation data
   Raw raw_{};                       // Raw orientation data
+
+  // initial biases. Values generated during initial 1 time calibration from py script
+  double b_[3] = {3.795706, 15.694968, 25.832445}; // hard iron bias for magnetometer
+  double A_[3][3] = {
+      // soft iron correction matrix
+      {1.68545815e01, 4.21150134e-03, 1.623333486e-01},
+      {4.21150134e-03, 1.59097586e01, -2.21327219e-02},
+      {1.62333486e-01, -2.21327219e-02, 1.64177326e01},
+  };
 };
 } // namespace SENSORS
