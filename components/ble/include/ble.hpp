@@ -35,6 +35,10 @@ struct __attribute__((packed)) Frame {
   FrameSample payload[SAMPLES_PER_FRAME];
 };
 
+struct __attribute__((packed)) Ack {
+  uint16_t frame_seq; 
+}; 
+
 static_assert(sizeof(FrameSample) == 24, "Frame sample expected to be 24 bytes packed.");
 static_assert(sizeof(FrameHeader) == 8, "Frame header expected to be 8 bytes packed."); 
 static_assert(sizeof(Frame) <= 244, "Frame size expected to fit into 1 notify packet.");  

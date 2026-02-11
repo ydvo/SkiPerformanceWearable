@@ -8,17 +8,11 @@ namespace BLE {
 
   static const NimBLEUUID QUAT_SVC_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f700"}; 
   static const NimBLEUUID QUAT_CHAR_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f701"}; 
-  static const NimBLEUUID QUAT_ACK_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f702"}; 
+  static const NimBLEUUID QUAT_ACK_UUID {"16fd3a8f-f37e-4155-8ebf-654df4d3f702"};
 
-  static espp::Logger logger({.tag = TAG, .level = espp::Logger::Verbosity::INFO});
+  BleModule::BleModule(): config_(), battery_level_(100), initialized_(false) {}
 
-  BleModule::BleModule(): config_(), battery_level_(100), initialized_(false) {
-    logger.set_verbosity(config_.log_level);
-  }
-
-  BleModule::BleModule(const Config& config): config_(config), battery_level_(100), initialized_(false) {
-    logger.set_verbosity(config_.log_level);
-  }
+  BleModule::BleModule(const Config& config): config_(config), battery_level_(100), initialized_(false) {}
 
   BleModule::~BleModule() {
     if (initialized_) {
@@ -52,13 +46,13 @@ namespace BLE {
     ); 
 
     initialized_ = true;
-    logger.info("BLE module initialized");
+    ESP_LOGI(TAG, "BLE module initialized");
     return ESP_OK;
   }
 
   esp_err_t BleModule::start_advertising() {
     if (!initialized_) {
-      logger.error("BLE not initialized, cannot start advertising");
+      ESP_LOGE(TAG, "BLE not initialized, cannot start advertising");
       return ESP_ERR_INVALID_STATE;
     }
 
@@ -67,19 +61,19 @@ namespace BLE {
       TAG, "Failed to start advertising"
     );
 
-    logger.info("BLE advertising started");
+    ESP_LOGI(TAG, "BLE advertising started"); 
 
     return ESP_OK;
   }
 
   esp_err_t BleModule::stop_advertising() {
-    if (!initialized_) {
-      logger.error("BLE not initialized, cannot stop advertising");
-      return ESP_ERR_INVALID_STATE;
-    }
+    ESP_RETURN_ON_FALSE(
+      initialized_, ESP_ERR_INVALID_STATE, 
+      TAG, "BLE not initialized, cannot stop advertising"
+    );
 
     ble_gatt_server_.stop_advertising();
-    logger.info("BLE advertising stopped");
+    ESP_LOGI(TAG, "BLE advertising stopped");
     return ESP_OK;
   }
 
@@ -93,17 +87,16 @@ namespace BLE {
       TAG, "BLE Module must be initialized to set battery level"
     );
 
-    if (level > 100) {
-      logger.warn("Battery level {} exceeds 100%, clamping to 100%", level);
-      level = 100;
-      return ESP_ERR_INVALID_ARG; 
-    }
+    ESP_RETURN_ON_FALSE(
+      level <= 100, ESP_ERR_INVALID_ARG, 
+      TAG, "Battery level %d exceeds 100%, ignoring", level
+    );
 
     battery_level_ = level;
 
     auto& battery_service = ble_gatt_server_.battery_service();
     battery_service.set_battery_level(battery_level_);
-    logger.debug("Battery level updated to {}%", battery_level_);
+    ESP_LOGD(TAG, "Battery level updated to %d%", battery_level_); 
     return ESP_OK; 
   }
 
@@ -129,7 +122,6 @@ namespace BLE {
 
   void BleModule::set_log_level(espp::Logger::Verbosity level) {
     config_.log_level = level;
-    logger.set_verbosity(level);
     ble_gatt_server_.set_log_level(level);
   }
 
@@ -137,36 +129,33 @@ namespace BLE {
     espp::BleGattServer::Callbacks callbacks;
 
     callbacks.connect_callback = [this](NimBLEConnInfo &conn) {
-      logger.info("Device connected – checking MTU");
-      // Directly ask the NimBLE device for the active client connection
-      // uint16_t mtu = NimBLEDevice::getClientConnection()->getMTU();
-      // logger.info("Negotiated MTU = %d", mtu);
+      ESP_LOGI(TAG, "Device connected – checking MTU");
       if (config_.on_connect) {
         config_.on_connect(conn);
       }
-    }; // Confirm MTU 
+    };
 
     callbacks.disconnect_callback = [this](NimBLEConnInfo& conn_info, espp::BleGattServer::DisconnectReason reason) {
-      logger.info("Device disconnected: {}", reason);
+      ESP_LOGI(TAG, "Device disconnected: %d", reason);
       if (config_.on_disconnect) {
         config_.on_disconnect(conn_info, reason);
       }
     };
 
     callbacks.authentication_complete_callback = [this](const NimBLEConnInfo& conn_info) {
-      logger.info("Device authenticated");
+      ESP_LOGI(TAG, "Device authenticated");
       if (config_.on_authenticated) {
         config_.on_authenticated(conn_info);
       }
     };
 
     callbacks.get_passkey_callback = [this]() {
-      logger.info("Getting passkey");
+      ESP_LOGI(TAG, "Getting passkey");
       return NimBLEDevice::getSecurityPasskey();
     };
 
     callbacks.confirm_passkey_callback = [this](const NimBLEConnInfo& conn_info, uint32_t passkey) {
-      logger.info("Confirming passkey: {}", passkey);
+      ESP_LOGI(TAG, "Confirming passkey: %d", passkey); 
       NimBLEDevice::injectConfirmPasskey(conn_info, passkey == NimBLEDevice::getSecurityPasskey());
     };
 
@@ -185,8 +174,9 @@ namespace BLE {
     ble_gatt_server_.set_init_key_distribution(config_.init_key_dist);
     ble_gatt_server_.set_resp_key_distribution(config_.resp_key_dist);
 
-    logger.debug(
-      "Security configured - bonding: {}, mitm: {}, secure_conn: {}",
+    ESP_LOGI(
+      TAG, 
+      "Security configured - bonding: %d, mitm: %d, secure_conn: %d", 
       config_.bonding, config_.mitm, config_.secure_connections
     );
   }
@@ -205,7 +195,7 @@ namespace BLE {
     device_info_service.set_firmware_version(config_.firmware_version);
     device_info_service.set_hardware_version(config_.hardware_version);
 
-    logger.debug("Device info configured");
+    ESP_LOGI(TAG, "Device info configured"); 
   }
 
   esp_err_t BleModule::setup_advertising() {
@@ -245,7 +235,9 @@ namespace BLE {
       TAG, "Failed to start ble gatt server"
     );
 
-    logger.debug("Advertising configured");
+    ESP_LOGI(TAG, "Advertising configured");
+    ESP_LOGI(TAG, "Quaternion characteristic handle %d", quat_char_->getHandle()); 
+    ESP_LOGI(TAG, "ACK characteristic handle %d", ack_char_->getHandle());
 
     return ESP_OK; 
   }
@@ -260,10 +252,13 @@ namespace BLE {
       TAG, "Failed to get server"
     );
 
-    logger.info("Service UUID: %s, Quat Char UUID: %s, ACK Char UUID: %s", 
-      QUAT_SVC_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str()); 
+    ESP_LOGI(
+      TAG, 
+      "Service UUID: %s, Quat Char UUID: %s, ACK Char UUID: %s", 
+      QUAT_SVC_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str()
+    );
 
-    logger.info("Creating service...");
+    ESP_LOGI(TAG, "Creating service...");
     
     NimBLEService *svc = pServer->createService(QUAT_SVC_UUID);
     ESP_RETURN_ON_FALSE(
@@ -271,9 +266,9 @@ namespace BLE {
       TAG, "Failed to create service."
     ); 
 
-    logger.info("Service created");
+    ESP_LOGI(TAG, "Service created"); 
 
-    logger.info("Creating quaternion characteristic..."); 
+    ESP_LOGI(TAG, "Creating quaternion characteristic...");
 
     quat_char_ = svc->createCharacteristic(
       QUAT_CHAR_UUID, 
@@ -285,30 +280,26 @@ namespace BLE {
       TAG, "Failed to create quaternion characteristic"
     ); 
 
-    logger.info("Quaternion characteristic created");
+    ESP_LOGI(TAG, "Quaternion characteristic created");
 
-    uint8_t dummy[244] = {0}; 
-    quat_char_->setValue(dummy, 244); 
-    logger.info("Quaternion character, set initial 24-byte value"); 
- 
-    logger.info("Creating CCCD desccriptor"); 
+    ESP_LOGI(TAG, "Creating CCCD desccriptor");
 
     NimBLEDescriptor *cccd = quat_char_->createDescriptor(
       NimBLEUUID((uint16_t)0x2902),
       NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
     ); 
 
-    if (cccd == nullptr) {
-      logger.error("Failed to create cccd descriptor, returned nullptr"); 
-      return ESP_ERR_INVALID_STATE;  
-    }
+    ESP_RETURN_ON_FALSE(
+      cccd != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to create cccd descriptor, returned nullptr"
+    );
 
-    logger.info("CCCD descriptor created");
+    ESP_LOGI(TAG, "CCCD descriptor created");
 
     cccd->setCallbacks(&quat_cccd_cb_); 
-    logger.info("CCCD callbacks set"); 
+    ESP_LOGI(TAG, "CCCD callbacks set"); 
 
-    logger.info("Creating user descriptor for quaternion"); 
+    ESP_LOGI(TAG, "Creating user descriptor for quaternion"); 
     NimBLEDescriptor *userDescriptor = quat_char_->createDescriptor(
       NimBLEUUID((uint16_t)0x2901), 
       NIMBLE_PROPERTY::READ
@@ -320,9 +311,9 @@ namespace BLE {
     ); 
 
     userDescriptor->setValue("Quaternion Data (NOTIFY)"); 
-    logger.info("User Descriptor set"); 
+    ESP_LOGI(TAG, "User Descriptor set");
 
-    logger.info("Creating ACK characteristic"); 
+    ESP_LOGI(TAG, "Creating ACK characteristic");
     ack_char_ = svc->createCharacteristic(
       QUAT_ACK_UUID, 
       NIMBLE_PROPERTY::WRITE
@@ -333,31 +324,28 @@ namespace BLE {
       TAG, "Failed to create ack characteristic"
     ); 
 
-    logger.info("ACK characteristic created"); 
+    ESP_LOGI(TAG, "ACK characteristic created");
  
     ack_char_->setCallbacks(&quat_ack_cb_); 
-    logger.info("ACK callbacks set"); 
+    ESP_LOGI(TAG, "ACK callbacks set");
 
-    logger.info("Creating User Descriptor for ACK..."); 
+    ESP_LOGI(TAG, "Creating User Descriptor for ACK..."); 
     NimBLEDescriptor *ackUserDescriptor = ack_char_->createDescriptor(
       NimBLEUUID((uint16_t)0x2901), 
       NIMBLE_PROPERTY::READ
     );
 
-    if (ackUserDescriptor == nullptr) {
-      logger.error("Failed to create ack user descriptor, returned nullptr");
-      return ESP_ERR_INVALID_STATE; 
-    }
+    ESP_RETURN_ON_FALSE(
+      ackUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to create ack user descriptor, returned nullptr"
+    );
 
     ackUserDescriptor->setValue("Acknowledgement (WRITE any value)"); 
-    logger.info("ACK User Description set"); 
+    ESP_LOGI(TAG, "ACK User Description set"); 
 
-    logger.info("Starting service"); 
+    ESP_LOGI(TAG, "Starting service"); 
     svc->start(); 
-    logger.info("Quaternion service started"); 
-    logger.info("Service handle: %d", svc->getHandle());
-    logger.info("Quaternion characteristic handle %d", quat_char_->getHandle()); 
-    logger.info("ACK characteristic handle %d", ack_char_->getHandle());  
+    ESP_LOGI(TAG, "Quaternion service started");   
 
     return ESP_OK; 
   }
@@ -411,7 +399,7 @@ namespace BLE {
 
     uint16_t value = pDescriptor->getValue<uint16_t>(); 
     bool enabled = (value & 0x0001) != 0; 
-    logger.info("Quaternion CCCD Write: 0x%04x -> Notifications %s", value, enabled ? "enabled" : "disabled"); 
+    ESP_LOGI(TAG, "Quaternion CCCD Write: 0x%04x -> Notifications %s", value, enabled ? "enabled" : "disabled"); 
 
     ESP_RETURN_VOID_ON_FALSE(
       parent_ != nullptr, ESP_ERR_INVALID_STATE, 
@@ -420,7 +408,7 @@ namespace BLE {
 
     parent_->quat_notifications_enabled_ = enabled; 
     if (enabled) {
-      logger.info("Notification enabled"); 
+      ESP_LOGI(TAG, "Notification enabled"); 
       parent_->first_send_pending_ = true; 
       parent_->ack_received_ = false; 
     }
@@ -433,7 +421,7 @@ namespace BLE {
     ); 
 
     std::string value = pCharacteristic->getValue(); 
-    logger.info("ACK Received: %d bytes", value.length()); 
+    ESP_LOGI(TAG, "ACK Received: %d bytes", value.length()); 
 
     ESP_RETURN_VOID_ON_FALSE(
       parent_ != nullptr, ESP_ERR_INVALID_STATE, 
@@ -441,12 +429,12 @@ namespace BLE {
     );
 
     if (parent_->ack_received_) {
-      logger.warn("Duplicate ACK received"); 
+      ESP_LOGW(TAG, "Duplicate ACK received"); 
       return;
     }
 
     parent_->ack_received_ = true; 
-    logger.info("ACK processed succesfully."); 
+    ESP_LOGI(TAG, "ACK processed succesfully"); 
   }
 
 }

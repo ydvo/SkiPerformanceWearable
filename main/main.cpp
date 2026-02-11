@@ -9,7 +9,6 @@
 #include "esp_attr.h"
 #include "esp_timer.h"
 
-
 #include "GPIO.hpp"
 #include "i2c.hpp"
 #include "imu.hpp"
@@ -560,7 +559,7 @@ esp_err_t mainLoop() {
     
     if (now_us - last_waiting_log_us >= 10'000'000) {  // Every 10 seconds
       last_waiting_log_us = now_us;
-      logger.info("⏳ Waiting for BLE connection…");
+      logger.info("Waiting for BLE connection…");
     }
 
     return ESP_OK; 
@@ -570,7 +569,7 @@ esp_err_t mainLoop() {
     logger.info("Device connected! Getting device info…");
     auto devs = ble_module_ptr->get_connected_device_infos();
     for (const auto &d : devs) {
-      logger.info("  📱 Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d), ble_module_ptr->get_rssi(d));
+      logger.info("Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d), ble_module_ptr->get_rssi(d));
     }
     was_connected = true;
     ble_module_ptr->reset_ack_on_connect();
@@ -634,7 +633,7 @@ esp_err_t mainLoop() {
     last_battery_update_us = now_us;
     ble_module_ptr->set_battery_level(battery_level);
     battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-    logger.info("🔋 Battery level: {}%", battery_level);
+    logger.info("Battery level: {}%", battery_level);
   }
 
   return ESP_OK;
