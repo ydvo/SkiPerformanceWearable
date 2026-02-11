@@ -487,21 +487,24 @@ esp_err_t initSystem() {
 
   // Create and initialize BLE module
   ble_module_ptr = new BLE::BleModule(ble_config);
-  if (!ble_module_ptr->init()) {
-    logger.error("Failed to initialize BLE module");
-    return ESP_ERR_INVALID_STATE;
-  }
+  ESP_RETURN_ON_ERROR(
+    ble_module_ptr->init(), 
+    "SYS_INIT", "Failed to initialize BLE module"
+  );
 
   // Set MTU for larger packets
-  NimBLEDevice::setMTU(247);
+  ESP_RETURN_ON_FALSE(
+    NimBLEDevice::setMTU(247), ESP_ERR_INVALID_STATE,
+    "SYS_INIT", "Failed to set MTU on NimBLEDevice."
+  );
 
   logger.info("BLE module initialized successfully");
 
   // Start advertising
-  if (!ble_module_ptr->start_advertising()) {
-    logger.error("Failed to start advertising");
-    return ESP_ERR_INVALID_STATE;
-  }
+  ESP_RETURN_ON_ERROR(
+    ble_module_ptr->start_advertising(), 
+    "SYS_INIT", "Failed to start advertising"
+  );
 
   logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
   logger.info("Connect with your phone's BLE scanner app");
@@ -513,12 +516,29 @@ esp_err_t initSystem() {
 //  Main Loop
 // ---------------------------------------------------------------------
 
+BLE::FrameSample samples_to_send[24] = {
+  {1, 0.0, 0.0, 0.0, 0.0}, {2, 0.0, 0.0, 0.0, 0.0}, 
+  {3, 0.0, 0.0, 0.0, 0.0}, {4, 0.0, 0.0, 0.0, 0.0}, 
+  {5, 0.0, 0.0, 0.0, 0.0}, {6, 0.0, 0.0, 0.0, 0.0}, 
+  {7, 0.0, 0.0, 0.0, 0.0}, {8, 0.0, 0.0, 0.0, 0.0}, 
+  {9, 0.0, 0.0, 0.0, 0.0}, {10, 0.0, 0.0, 0.0, 0.0}, 
+  {11, 0.0, 0.0, 0.0, 0.0}, {12, 0.0, 0.0, 0.0, 0.0}, 
+  {13, 0.0, 0.0, 0.0, 0.0}, {14, 0.0, 0.0, 0.0, 0.0}, 
+  {15, 0.0, 0.0, 0.0, 0.0}, {16, 0.0, 0.0, 0.0, 0.0}, 
+  {17, 0.0, 0.0, 0.0, 0.0}, {18, 0.0, 0.0, 0.0, 0.0}, 
+  {19, 0.0, 0.0, 0.0, 0.0}, {20, 0.0, 0.0, 0.0, 0.0}, 
+  {21, 0.0, 0.0, 0.0, 0.0}, {22, 0.0, 0.0, 0.0, 0.0}, 
+  {23, 0.0, 0.0, 0.0, 0.0}, {24, 0.0, 0.0, 0.0, 0.0}, 
+}; 
+
 esp_err_t mainLoop() {
   // Timing state
   static int64_t last_send_time_us = 0;
   static int64_t last_state_log_us = 0;
   static int64_t last_battery_update_us = 0;
   static int64_t last_waiting_log_us = 0;
+  static uint16_t frame_seq = 0; 
+  static size_t sample_idx_to_send = 0; 
 
   static bool was_connected = false; 
     
@@ -577,20 +597,30 @@ esp_err_t mainLoop() {
   // ---------------------------------------------------------------------
   while (can_send || timeout) {
     // We have a frame - pack into bulk format
+    uint16_t sample_count = 24 - sample_idx_to_send >= BLE::SAMPLES_PER_FRAME 
+      ? BLE::SAMPLES_PER_FRAME 
+      : 24 - sample_idx_to_send; 
+
+    uint16_t payload_len = sample_count * ((uint16_t) sizeof(BLE::FrameSample)); 
+    
     BLE::Frame frame {
       .header = {
-        .frame_seq = 1,
-        .sample_count = 0,
-        .payload_len = 0,  
+        .frame_seq = frame_seq++,
+        .sample_count = sample_count,
+        .payload_len = payload_len,  
         .flags = 0, 
       }, 
       .payload = {}
     };
 
+    memcpy(frame.payload, &samples_to_send[sample_idx_to_send], payload_len); 
+
     logger.info("Sending bulk frame seq {} (244 B)", (unsigned int) frame.header.frame_seq);
     ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t*>(&frame), sizeof(frame));
     ble_module_ptr->reset_ack();
     last_send_time_us = now_us;
+
+    sample_idx_to_send = sample_count + sample_idx_to_send >= 24 ? 0 : sample_count + sample_idx_to_send; 
 
     // Re-evaluate send condition
     can_send = ble_module_ptr->is_ack_received();
@@ -660,6 +690,7 @@ extern "C" void app_main() {
   ); 
 
   while (true) {
-    std::this_thread::sleep_for(1s); 
+    mainLoop(); 
+    std::this_thread::sleep_for(10ms); 
   }
 }

@@ -41,8 +41,15 @@ namespace BLE {
 
     ble_gatt_server_.start_services();
     setup_device_info();
-    init_quat_service();
-    setup_advertising();
+
+    ESP_RETURN_ON_ERROR(
+      init_quat_service(), 
+      TAG, "Failed to initialize quaternion service."
+    );
+    ESP_RETURN_ON_ERROR(
+      setup_advertising(), 
+      TAG, "Failed to setup advertising"
+    ); 
 
     initialized_ = true;
     logger.info("BLE module initialized");
@@ -204,31 +211,34 @@ namespace BLE {
   esp_err_t BleModule::setup_advertising() {
     // Set the advertising data
     espp::BleGattServer::AdvertisedData adv_data;
+    espp::BleGattServer::AdvertisedData scan_rsp; 
 
     // Set flags for general discoverable mode
     ESP_RETURN_ON_FALSE(
       adv_data.setFlags(BLE_HS_ADV_F_DISC_GEN), ESP_ERR_INVALID_STATE, 
       TAG, "Failed to set advertised data flag"
     );
-    ESP_RETURN_ON_FALSE(
-      adv_data.setName(config_.device_name), ESP_ERR_INVALID_STATE, 
-      TAG, "Failed to set advertised data name"
-    ); 
-    ESP_RETURN_ON_FALSE(
-      adv_data.setAppearance((uint16_t) espp::BleAppearance::GENERIC_COMPUTER), ESP_ERR_INVALID_STATE, 
-      TAG, "Failed to set advertised data appearance"
-    );
-    ESP_RETURN_ON_FALSE(
-      adv_data.addTxPower(), ESP_ERR_INVALID_STATE, 
-      TAG, "Failed to add advertised data tx power"
-    );
 
     ESP_RETURN_ON_FALSE(
       adv_data.addServiceUUID(QUAT_SVC_UUID), ESP_ERR_INVALID_STATE, 
       TAG, "Failed to add quaternion service uuid to advertised data"
     );
+
+    ESP_RETURN_ON_FALSE(
+      scan_rsp.setName(config_.device_name), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to set advertised data name"
+    ); 
+    ESP_RETURN_ON_FALSE(
+      scan_rsp.setAppearance((uint16_t) espp::BleAppearance::GENERIC_COMPUTER), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to set advertised data appearance"
+    );
+    ESP_RETURN_ON_FALSE(
+      scan_rsp.addTxPower(), ESP_ERR_INVALID_STATE, 
+      TAG, "Failed to add advertised data tx power"
+    );
     
     ble_gatt_server_.set_advertisement_data(adv_data);
+    ble_gatt_server_.set_scan_response_data(scan_rsp); 
 
     ESP_RETURN_ON_FALSE(
       ble_gatt_server_.start(), ESP_ERR_INVALID_STATE, 
@@ -277,8 +287,8 @@ namespace BLE {
 
     logger.info("Quaternion characteristic created");
 
-    uint8_t dummy[24] = {0}; 
-    quat_char_->setValue(dummy, 24); 
+    uint8_t dummy[244] = {0}; 
+    quat_char_->setValue(dummy, 244); 
     logger.info("Quaternion character, set initial 24-byte value"); 
  
     logger.info("Creating CCCD desccriptor"); 
