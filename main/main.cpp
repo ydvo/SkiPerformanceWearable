@@ -1,3 +1,6 @@
+#include "flash_log.hpp"
+#include "imu.hpp"
+
 #include "driver/spi_common.h"
 #include "esp_attr.h"
 #include "esp_check.h"
@@ -13,15 +16,12 @@
 #include "GPIO.hpp"
 #include "ble.hpp"
 #include "flash.hpp"
-#include "flash_log.hpp"
+#include "fsr.hpp"
 #include "fuelgauge.hpp"
+#include "haptic_motor.hpp"
 #include "i2c.hpp"
-#include "imu.hpp"
 #include "led.hpp"
 #include "logger.hpp"
-
-#include "fsr.hpp"
-#include "haptic_motor.hpp"
 
 #include <array>
 #include <cstdio>
@@ -389,7 +389,7 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(100)); // give i2c time to startup
+  vTaskDelay(pdMS_TO_TICKS(100));
 
   // init imu
   bool imu_initialized = imu.init();
@@ -399,310 +399,235 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(500)); // give imu time to startup before first i2c read
+  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
 
-  if (imu.get_whoami() == 0xEA && imu_initialized) {
-    logger.info("Imu initialized");
+  uint8_t test = imu.get_whoami();
+  if (test != 0xEA) {
+    logger.error("Invalid imu device id {}", test);
   }
 
-  // // for testing
-  // imu.disable_magnetometer();
+  logger.info("Initialized imu");
 
-  // check if battery is connected
-  if (!battery.isDeviceReady())
-    logger.error("Could not initialize fuel gauge. Check battery connection");
+  red_led.turn_on();
 
-  // setup force sensor
-  pressure_sensor.set_calibration(0.00f, 2893.5f);
-
-  // Haptic setup
-  if (haptic.init()) {
-
-    // Set to internal trigger mode
-    haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
-
-    // Select ERM motor
-    haptic.select_motor(HAPTICS::DRV2605L::MotorType::ERM);
-
-    // Select library
-    haptic.select_library(HAPTICS::DRV2605L::Library::ERM_LIB_A);
-
-    // Set waveform sequence
-    // haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
-    // haptic.set_waveform(1, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
-    // haptic.set_waveform(2, HAPTICS::DRV2605L::EFFECTS::LONG_BUZZ);    // buzz
-    // haptic.set_waveform(3, 0);                                        // End of sequence
-    haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK);
-    haptic.set_waveform(1, 0);
-
-    // Trigger the waveform
-    haptic.go();
-
-    // Set threshold to 50%
-    float threshold = 0.5f;
-    threshold = pressure_sensor.get_baseline() +
-                (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * threshold;
-    pressure_sensor.set_pressure_threshold(threshold);
-
-    // Wait for effect to complete
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    haptic.set_mode(HAPTICS::DRV2605L::Mode::REALTIME_PLAYBACK);
-    haptic.set_realtime_value(0);
-  } else {
-    logger.error("Could not initialize haptics");
-  }
-}
-
-/*
- * mainLoop
- *  - runs repeatedly, contains update logic
- */
-void mainLoop(auto dt) {
-
-  // check fsr
-  auto force_percent = pressure_sensor.read_percentage();
-
-  // get imu data
-  if (imu.update(dt)) {
-    SENSORS::Imu::Quaternion quat = imu.get_orientation();
-
-    // read from fsr
-
-    printf("DATA %0.4f %0.4f %0.4f %0.4f %0.4f\r\n", quat.w, quat.x, quat.y, quat.z, force_percent);
-  }
-  // float bat_volt = battery.cellVoltage();
-  // float bat_percent = battery.cellPercent();
-  // float discharge = battery.chargeRate();
-  //
-  // printf("Battery state: %0.4fV %0.4f %0.4f per hour\r\n", bat_volt, bat_percent, discharge);
-
-  // haptic if above threshold
-  if (pressure_sensor.is_pressed()) {
-    haptic.set_realtime_value(127);
-  } else {
-    haptic.set_realtime_value(0);
-
-    spi_bus_config_t spi2_bus_config{
-        .mosi_io_num = spi2_mosi,
-        .miso_io_num = spi2_miso,
-        .sclk_io_num = spi2_sck,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &spi2_bus_config, SPI_DMA_CH_AUTO),
-                        "SYS_INIT", "Failed to initialize SPI_2 bus.");
-
-    ESP_RETURN_ON_ERROR(spi_flash.init(), "SYS_INIT", "Failed to initialize SPI flash.");
-
-    ESP_RETURN_ON_ERROR(flash_log.init(), "SYS_INIT", "Failed to initialize flash log.");
-
-    ESP_RETURN_ON_ERROR(initTimers(), "SYS_INIT", "Failed to initialize timers.");
-
-    flash_writer_buf = xRingbufferCreate(32 * sizeof(quat_sample_t), RINGBUF_TYPE_NOSPLIT);
-
-    if (flash_writer_buf == nullptr) {
-      ESP_LOGE("SYS_INIT", "Failed to create flash writer buffer.");
-      return ESP_ERR_INVALID_STATE;
-    }
-
-    // Configure BLE
-    BLE::BleModule::Config ble_config;
-    ble_config.device_name = "Ski Wearable Test";
-    ble_config.manufacturer_name = "ESP-CPP";
-    ble_config.model_number = "ski-wearable-01";
-    ble_config.serial_number = "TEST123456";
-
-    // BLE connection callbacks
-    ble_config.on_connect = [](NimBLEConnInfo &info) { printf("BLE: Client connected!\n"); };
-    ble_config.on_disconnect = [](NimBLEConnInfo &info,
-                                  espp::BleGattServer::DisconnectReason reason) {
-      printf("BLE: Client disconnected\n");
-    };
-    ble_config.on_authenticated = [](const NimBLEConnInfo &info) {
-      printf("BLE: Client authenticated successfully\n");
-    };
-
-    // Create and initialize BLE module
-    ble_module_ptr = new BLE::BleModule(ble_config);
-    ESP_RETURN_ON_ERROR(ble_module_ptr->init(), "SYS_INIT", "Failed to initialize BLE module");
-
-    // Set MTU for larger packets
-    ESP_RETURN_ON_FALSE(NimBLEDevice::setMTU(247), ESP_ERR_INVALID_STATE, "SYS_INIT",
-                        "Failed to set MTU on NimBLEDevice.");
-
-    logger.info("BLE module initialized successfully");
-
-    // Start advertising
-    ESP_RETURN_ON_ERROR(ble_module_ptr->start_advertising(), "SYS_INIT",
-                        "Failed to start advertising");
-
-    logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
-    logger.info("Connect with your phone's BLE scanner app");
-
-    return ESP_OK;
-  }
-
-  // ---------------------------------------------------------------------
-  //  Main Loop
-  // ---------------------------------------------------------------------
-
-  BLE::FrameSample samples_to_send[24] = {
-      {1, 0.0, 0.0, 0.0, 0.0},  {2, 0.0, 0.0, 0.0, 0.0},  {3, 0.0, 0.0, 0.0, 0.0},
-      {4, 0.0, 0.0, 0.0, 0.0},  {5, 0.0, 0.0, 0.0, 0.0},  {6, 0.0, 0.0, 0.0, 0.0},
-      {7, 0.0, 0.0, 0.0, 0.0},  {8, 0.0, 0.0, 0.0, 0.0},  {9, 0.0, 0.0, 0.0, 0.0},
-      {10, 0.0, 0.0, 0.0, 0.0}, {11, 0.0, 0.0, 0.0, 0.0}, {12, 0.0, 0.0, 0.0, 0.0},
-      {13, 0.0, 0.0, 0.0, 0.0}, {14, 0.0, 0.0, 0.0, 0.0}, {15, 0.0, 0.0, 0.0, 0.0},
-      {16, 0.0, 0.0, 0.0, 0.0}, {17, 0.0, 0.0, 0.0, 0.0}, {18, 0.0, 0.0, 0.0, 0.0},
-      {19, 0.0, 0.0, 0.0, 0.0}, {20, 0.0, 0.0, 0.0, 0.0}, {21, 0.0, 0.0, 0.0, 0.0},
-      {22, 0.0, 0.0, 0.0, 0.0}, {23, 0.0, 0.0, 0.0, 0.0}, {24, 0.0, 0.0, 0.0, 0.0},
+  spi_bus_config_t spi2_bus_config{
+      .mosi_io_num = spi2_mosi,
+      .miso_io_num = spi2_miso,
+      .sclk_io_num = spi2_sck,
+      .quadwp_io_num = -1,
+      .quadhd_io_num = -1,
   };
 
-  esp_err_t mainLoop() {
-    // Timing state
-    static int64_t last_send_time_us = 0;
-    static int64_t last_state_log_us = 0;
-    static int64_t last_battery_update_us = 0;
-    static int64_t last_waiting_log_us = 0;
-    static uint16_t frame_seq = 0;
-    static size_t sample_idx_to_send = 0;
+  ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &spi2_bus_config, SPI_DMA_CH_AUTO), "SYS_INIT",
+                      "Failed to initialize SPI_2 bus.");
 
-    static bool was_connected = false;
+  ESP_RETURN_ON_ERROR(spi_flash.init(), "SYS_INIT", "Failed to initialize SPI flash.");
 
-    const int64_t ACK_TIMEOUT_US = 30'000'000; // 30 seconds
+  ESP_RETURN_ON_ERROR(flash_log.init(), "SYS_INIT", "Failed to initialize flash log.");
 
-    if (!ble_module_ptr) {
-      logger.error("ble_module_ptr is NULL!");
-      return ESP_ERR_INVALID_STATE;
+  ESP_RETURN_ON_ERROR(initTimers(), "SYS_INIT", "Failed to initialize timers.");
+
+  flash_writer_buf = xRingbufferCreate(32 * sizeof(quat_sample_t), RINGBUF_TYPE_NOSPLIT);
+
+  if (flash_writer_buf == nullptr) {
+    ESP_LOGE("SYS_INIT", "Failed to create flash writer buffer.");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  // Configure BLE
+  BLE::BleModule::Config ble_config;
+  ble_config.device_name = "Ski Wearable Test";
+  ble_config.manufacturer_name = "ESP-CPP";
+  ble_config.model_number = "ski-wearable-01";
+  ble_config.serial_number = "TEST123456";
+
+  // BLE connection callbacks
+  ble_config.on_connect = [](NimBLEConnInfo &info) { printf("BLE: Client connected!\n"); };
+  ble_config.on_disconnect = [](NimBLEConnInfo &info,
+                                espp::BleGattServer::DisconnectReason reason) {
+    printf("BLE: Client disconnected\n");
+  };
+  ble_config.on_authenticated = [](const NimBLEConnInfo &info) {
+    printf("BLE: Client authenticated successfully\n");
+  };
+
+  // Create and initialize BLE module
+  ble_module_ptr = new BLE::BleModule(ble_config);
+  ESP_RETURN_ON_ERROR(ble_module_ptr->init(), "SYS_INIT", "Failed to initialize BLE module");
+
+  // Set MTU for larger packets
+  ESP_RETURN_ON_FALSE(NimBLEDevice::setMTU(247), ESP_ERR_INVALID_STATE, "SYS_INIT",
+                      "Failed to set MTU on NimBLEDevice.");
+
+  logger.info("BLE module initialized successfully");
+
+  // Start advertising
+  ESP_RETURN_ON_ERROR(ble_module_ptr->start_advertising(), "SYS_INIT",
+                      "Failed to start advertising");
+
+  logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
+  logger.info("Connect with your phone's BLE scanner app");
+
+  return ESP_OK;
+}
+// ---------------------------------------------------------------------
+//  Main Loop
+// ---------------------------------------------------------------------
+
+BLE::FrameSample samples_to_send[24] = {
+    {1, 0.0, 0.0, 0.0, 0.0},  {2, 0.0, 0.0, 0.0, 0.0},  {3, 0.0, 0.0, 0.0, 0.0},
+    {4, 0.0, 0.0, 0.0, 0.0},  {5, 0.0, 0.0, 0.0, 0.0},  {6, 0.0, 0.0, 0.0, 0.0},
+    {7, 0.0, 0.0, 0.0, 0.0},  {8, 0.0, 0.0, 0.0, 0.0},  {9, 0.0, 0.0, 0.0, 0.0},
+    {10, 0.0, 0.0, 0.0, 0.0}, {11, 0.0, 0.0, 0.0, 0.0}, {12, 0.0, 0.0, 0.0, 0.0},
+    {13, 0.0, 0.0, 0.0, 0.0}, {14, 0.0, 0.0, 0.0, 0.0}, {15, 0.0, 0.0, 0.0, 0.0},
+    {16, 0.0, 0.0, 0.0, 0.0}, {17, 0.0, 0.0, 0.0, 0.0}, {18, 0.0, 0.0, 0.0, 0.0},
+    {19, 0.0, 0.0, 0.0, 0.0}, {20, 0.0, 0.0, 0.0, 0.0}, {21, 0.0, 0.0, 0.0, 0.0},
+    {22, 0.0, 0.0, 0.0, 0.0}, {23, 0.0, 0.0, 0.0, 0.0}, {24, 0.0, 0.0, 0.0, 0.0},
+};
+
+esp_err_t mainLoop(auto dt) {
+  // Timing state
+  static int64_t last_send_time_us = 0;
+  static int64_t last_state_log_us = 0;
+  static int64_t last_battery_update_us = 0;
+  static int64_t last_waiting_log_us = 0;
+  static uint16_t frame_seq = 0;
+  static size_t sample_idx_to_send = 0;
+
+  static bool was_connected = false;
+
+  const int64_t ACK_TIMEOUT_US = 30'000'000; // 30 seconds
+
+  if (!ble_module_ptr) {
+    logger.error("ble_module_ptr is NULL!");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  int64_t now_us = esp_timer_get_time();
+  bool is_connected = ble_module_ptr->is_connected();
+  if (!is_connected) {
+    if (was_connected) {
+      logger.info("Device disconnected – resetting state");
+      was_connected = false;
+      battery_level = 100;
     }
 
-    int64_t now_us = esp_timer_get_time();
-    bool is_connected = ble_module_ptr->is_connected();
-    if (!is_connected) {
-      if (was_connected) {
-        logger.info("Device disconnected – resetting state");
-        was_connected = false;
-        battery_level = 100;
-      }
-
-      if (now_us - last_waiting_log_us >= 10'000'000) { // Every 10 seconds
-        last_waiting_log_us = now_us;
-        logger.info("Waiting for BLE connection…");
-      }
-
-      return ESP_OK;
-    }
-
-    if (!was_connected) {
-      logger.info("Device connected! Getting device info…");
-      auto devs = ble_module_ptr->get_connected_device_infos();
-      for (const auto &d : devs) {
-        logger.info("Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d),
-                    ble_module_ptr->get_rssi(d));
-      }
-      was_connected = true;
-      ble_module_ptr->reset_ack_on_connect();
-      last_send_time_us = now_us;
-    }
-
-    // ACK/timeout handling
-    bool can_send = ble_module_ptr->is_ack_received();
-    bool timeout = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
-
-    // Periodic status logging (every 5 seconds)
-    if (now_us - last_state_log_us >= 5'000'000) {
-      last_state_log_us = now_us;
-      int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
-      if (can_send) {
-        logger.info("Ready to send (ACK received or first-send pending)");
-      } else {
-        logger.info("Waiting for ACK – {} s since last send", secs_since_last);
-      }
-    }
-
-    // ---------------------------------------------------------------------
-    // SEND LOOP
-    // ---------------------------------------------------------------------
-    while (can_send || timeout) {
-      // We have a frame - pack into bulk format
-      uint16_t sample_count = 24 - sample_idx_to_send >= BLE::SAMPLES_PER_FRAME
-                                  ? BLE::SAMPLES_PER_FRAME
-                                  : 24 - sample_idx_to_send;
-
-      uint16_t payload_len = sample_count * ((uint16_t)sizeof(BLE::FrameSample));
-
-      BLE::Frame frame{.header =
-                           {
-                               .frame_seq = frame_seq++,
-                               .sample_count = sample_count,
-                               .payload_len = payload_len,
-                               .flags = 0,
-                           },
-                       .payload = {}};
-
-      memcpy(frame.payload, &samples_to_send[sample_idx_to_send], payload_len);
-
-      logger.info("Sending bulk frame seq {} (244 B)", (unsigned int)frame.header.frame_seq);
-      ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t *>(&frame), sizeof(frame));
-      ble_module_ptr->reset_ack();
-      last_send_time_us = now_us;
-
-      sample_idx_to_send =
-          sample_count + sample_idx_to_send >= 24 ? 0 : sample_count + sample_idx_to_send;
-
-      // Re-evaluate send condition
-      can_send = ble_module_ptr->is_ack_received();
-      timeout = false;
-    }
-
-    // ---------------------------------------------------------------------
-    // Battery update (every 50 seconds)
-    // ---------------------------------------------------------------------
-    if (now_us - last_battery_update_us >= 50'000'000) {
-      last_battery_update_us = now_us;
-      ble_module_ptr->set_battery_level(battery_level);
-      battery_level = (battery_level == 0) ? 100 : battery_level - 1;
-      logger.info("Battery level: {}%", battery_level);
+    if (now_us - last_waiting_log_us >= 10'000'000) { // Every 10 seconds
+      last_waiting_log_us = now_us;
+      logger.info("Waiting for BLE connection…");
     }
 
     return ESP_OK;
   }
 
-  // ---------------------------------------------------------------------
-  //  Application Entry Point
-  // ---------------------------------------------------------------------
+  if (!was_connected) {
+    logger.info("Device connected! Getting device info…");
+    auto devs = ble_module_ptr->get_connected_device_infos();
+    for (const auto &d : devs) {
+      logger.info("Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d),
+                  ble_module_ptr->get_rssi(d));
+    }
+    was_connected = true;
+    ble_module_ptr->reset_ack_on_connect();
+    last_send_time_us = now_us;
+  }
 
-  extern "C" void app_main() {
-    if (initSystem() != ESP_OK) {
-      logger.error("Failed initializing a system.");
-    } // called once
+  // ACK/timeout handling
+  bool can_send = ble_module_ptr->is_ack_received();
+  bool timeout = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
 
-    // Create a task that will write samples to the flash
-    xTaskCreate(flash_writer_task, "flash_writer", 4096, NULL, 3, &flash_writer_task_handle);
-
-    // Create a task that will capture sensor data
-    xTaskCreate(capture_sensor_data_task, "capture_sensor_data", 4096, NULL, 8,
-                &capture_task_handle);
-
-    // Create a task that will control program flow
-    xTaskCreate(control_task, "control", 4096, NULL, 9, &control_task_handle);
-
-    // Create a task that will transmit data
-    xTaskCreate(upload_task, "upload", 4096, NULL, 5, &upload_task_handle);
-
-    while (true) {
-      // get elapsed time in between loops
-      auto now{std::chrono::system_clock::now()};
-      static auto t0{now};
-      auto t1{now};
-      std::chrono::duration<float> dt_ = t1 - t0;
-      auto dt = dt_.count();
-      t0 = t1;
-      // logger.info("Elapsed time in float seconds: {}", dt);
-
-      mainLoop(dt); // run repeatedly
-
-      vTaskDelay(pdMS_TO_TICKS(100));
+  // Periodic status logging (every 5 seconds)
+  if (now_us - last_state_log_us >= 5'000'000) {
+    last_state_log_us = now_us;
+    int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
+    if (can_send) {
+      logger.info("Ready to send (ACK received or first-send pending)");
+    } else {
+      logger.info("Waiting for ACK – {} s since last send", secs_since_last);
     }
   }
+
+  // ---------------------------------------------------------------------
+  // SEND LOOP
+  // ---------------------------------------------------------------------
+  while (can_send || timeout) {
+    // We have a frame - pack into bulk format
+    uint16_t sample_count = 24 - sample_idx_to_send >= BLE::SAMPLES_PER_FRAME
+                                ? BLE::SAMPLES_PER_FRAME
+                                : 24 - sample_idx_to_send;
+
+    uint16_t payload_len = sample_count * ((uint16_t)sizeof(BLE::FrameSample));
+
+    BLE::Frame frame{.header =
+                         {
+                             .frame_seq = frame_seq++,
+                             .sample_count = sample_count,
+                             .payload_len = payload_len,
+                             .flags = 0,
+                         },
+                     .payload = {}};
+
+    memcpy(frame.payload, &samples_to_send[sample_idx_to_send], payload_len);
+
+    logger.info("Sending bulk frame seq {} (244 B)", (unsigned int)frame.header.frame_seq);
+    ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t *>(&frame), sizeof(frame));
+    ble_module_ptr->reset_ack();
+    last_send_time_us = now_us;
+
+    sample_idx_to_send =
+        sample_count + sample_idx_to_send >= 24 ? 0 : sample_count + sample_idx_to_send;
+
+    // Re-evaluate send condition
+    can_send = ble_module_ptr->is_ack_received();
+    timeout = false;
+  }
+
+  // ---------------------------------------------------------------------
+  // Battery update (every 50 seconds)
+  // ---------------------------------------------------------------------
+  if (now_us - last_battery_update_us >= 50'000'000) {
+    last_battery_update_us = now_us;
+    ble_module_ptr->set_battery_level(battery_level);
+    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+    logger.info("Battery level: {}%", battery_level);
+  }
+
+  return ESP_OK;
+}
+
+// ---------------------------------------------------------------------
+//  Application Entry Point
+// ---------------------------------------------------------------------
+
+extern "C" void app_main() {
+  if (initSystem() != ESP_OK) {
+    logger.error("Failed initializing a system.");
+  } // called once
+
+  // Create a task that will write samples to the flash
+  xTaskCreate(flash_writer_task, "flash_writer", 4096, NULL, 3, &flash_writer_task_handle);
+
+  // Create a task that will capture sensor data
+  xTaskCreate(capture_sensor_data_task, "capture_sensor_data", 4096, NULL, 8, &capture_task_handle);
+
+  // Create a task that will control program flow
+  xTaskCreate(control_task, "control", 4096, NULL, 9, &control_task_handle);
+
+  // Create a task that will transmit data
+  xTaskCreate(upload_task, "upload", 4096, NULL, 5, &upload_task_handle);
+
+  while (true) {
+    // get elapsed time in between loops
+    auto now{std::chrono::system_clock::now()};
+    static auto t0{now};
+    auto t1{now};
+    std::chrono::duration<float> dt_ = t1 - t0;
+    auto dt = dt_.count();
+    t0 = t1;
+    // logger.info("Elapsed time in float seconds: {}", dt);
+
+    mainLoop(dt); // run repeatedly
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
