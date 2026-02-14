@@ -18,3 +18,4 @@ dependencies:
   espp/icm20948: ^1.0.33
   espp/filters: '*'
   espp/adc: '*'
+  espp/ble_gatt_server: '*'

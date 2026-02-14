@@ -1,0 +1,13 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "idf.flashType": "UART",
+  "idf.portWin": "COM6",
+  "idf.port": "/dev/tty.usbmodem2101",
+  "idf.currentSetup": "/Users/work/esp/v5.5.1/esp-idf"
+}
