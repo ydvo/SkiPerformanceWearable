@@ -4,7 +4,6 @@
 #include "hal/i2c_types.h"
 #include "soc/gpio_num.h"
 #include "driver/spi_common.h"
-
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_attr.h"
@@ -17,32 +16,40 @@
 #include "logger.hpp"
 #include "flash.hpp"
 #include "flash_log.hpp"
-
+#include "ble.hpp"
 
 #include <cstdio>
 #include <stdint.h>
 #include <array>
+#include <vector>
 
 using namespace std::chrono_literals;
 
 static esp_timer_handle_t sensor_timer; 
 constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
 
-// icm
-constexpr uint8_t ICM20948_ADRESS{0x69};
-constexpr uint32_t ICM20948_I2C_HZ{400000};
+// ---------------------------------------------------------------------
+//  Hardware Pin Definitions
+// ---------------------------------------------------------------------
 
-// i2c pins
+// ICM-20948 IMU
+constexpr uint8_t ICM20948_ADDRESS{0x69};
+constexpr uint32_t ICM20948_I2C_HZ{400000};  // 400 kHz
+
+// I2C pins
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 
-// spi 2 pins
-static constexpr auto spi2_sck {GPIO_NUM_12}; 
-static constexpr auto spi2_mosi {GPIO_NUM_11}; 
-static constexpr auto spi2_miso {GPIO_NUM_13}; 
+// SPI2 pins (for flash storage)
+static constexpr auto spi2_sck{GPIO_NUM_12};
+static constexpr auto spi2_mosi{GPIO_NUM_11};
+static constexpr auto spi2_miso{GPIO_NUM_13};
+static constexpr auto flash_spi_cs{GPIO_NUM_10};
 
-static constexpr auto flash_spi_cs {GPIO_NUM_10}; 
+// ---------------------------------------------------------------------
+//  Global Objects
+// ---------------------------------------------------------------------
 
 typedef enum {
   system_state_idle, 
@@ -68,10 +75,11 @@ espp::I2c i2c({
 });
 
 // SPI Flash Device
-STORAGE::SpiFlashDevice spi_flash ({
+STORAGE::SpiFlashDevice spi_flash({
   .host = SPI2_HOST,
   .cs = flash_spi_cs
 });
+
 
 // Flash Log
 STORAGE::FlashLog<STORAGE::Quaternion> flash_log(
@@ -79,6 +87,13 @@ STORAGE::FlashLog<STORAGE::Quaternion> flash_log(
 );
 // IMU
 SENSORS::Imu imu(i2c);
+
+// BLE Module
+BLE::BleModule *ble_module_ptr = nullptr;
+
+// State Variables
+float dt = 0;
+uint8_t battery_level = 100;
 
 /**
  * Flushes the flash contents over UART
@@ -361,10 +376,10 @@ esp_err_t initTimers() {
   return ESP_OK; 
 }
 
-/*
- * initSystem()
- *  - initialization function, runs once before main loop
- */
+// ---------------------------------------------------------------------
+//  System Initialization
+// ---------------------------------------------------------------------
+
 esp_err_t initSystem() {
   logger.info("Initializing...");
 
@@ -382,11 +397,8 @@ esp_err_t initSystem() {
   );
   logger.info("Enabled Boot Button");
 
-  // led
+  // Initialize LED
   LED::led red_led = LED::led(LED::RED_LED);
-
-  // create i2c instance
-  logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
   std::error_code ec;
   i2c.init(ec); // initialize
@@ -454,10 +466,183 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  return ESP_OK; 
+  // Configure BLE
+  BLE::BleModule::Config ble_config;
+  ble_config.device_name = "Ski Wearable Test";
+  ble_config.manufacturer_name = "ESP-CPP";
+  ble_config.model_number = "ski-wearable-01";
+  ble_config.serial_number = "TEST123456";
+
+  // BLE connection callbacks
+  ble_config.on_connect = [](NimBLEConnInfo &info) {
+    printf("BLE: Client connected!\n");
+  };
+  ble_config.on_disconnect = [](NimBLEConnInfo &info, espp::BleGattServer::DisconnectReason reason) {
+    printf("BLE: Client disconnected\n");
+  };
+  ble_config.on_authenticated = [](const NimBLEConnInfo &info) {
+    printf("BLE: Client authenticated successfully\n");
+  };
+
+  // Create and initialize BLE module
+  ble_module_ptr = new BLE::BleModule(ble_config);
+  ESP_RETURN_ON_ERROR(
+    ble_module_ptr->init(), 
+    "SYS_INIT", "Failed to initialize BLE module"
+  );
+
+  // Set MTU for larger packets
+  ESP_RETURN_ON_FALSE(
+    NimBLEDevice::setMTU(247), ESP_ERR_INVALID_STATE,
+    "SYS_INIT", "Failed to set MTU on NimBLEDevice."
+  );
+
+  logger.info("BLE module initialized successfully");
+
+  // Start advertising
+  ESP_RETURN_ON_ERROR(
+    ble_module_ptr->start_advertising(), 
+    "SYS_INIT", "Failed to start advertising"
+  );
+
+  logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
+  logger.info("Connect with your phone's BLE scanner app");
+
+  return ESP_OK;
 }
 
-/* Application Entry Point */
+// ---------------------------------------------------------------------
+//  Main Loop
+// ---------------------------------------------------------------------
+
+BLE::FrameSample samples_to_send[24] = {
+  {1, 0.0, 0.0, 0.0, 0.0}, {2, 0.0, 0.0, 0.0, 0.0}, 
+  {3, 0.0, 0.0, 0.0, 0.0}, {4, 0.0, 0.0, 0.0, 0.0}, 
+  {5, 0.0, 0.0, 0.0, 0.0}, {6, 0.0, 0.0, 0.0, 0.0}, 
+  {7, 0.0, 0.0, 0.0, 0.0}, {8, 0.0, 0.0, 0.0, 0.0}, 
+  {9, 0.0, 0.0, 0.0, 0.0}, {10, 0.0, 0.0, 0.0, 0.0}, 
+  {11, 0.0, 0.0, 0.0, 0.0}, {12, 0.0, 0.0, 0.0, 0.0}, 
+  {13, 0.0, 0.0, 0.0, 0.0}, {14, 0.0, 0.0, 0.0, 0.0}, 
+  {15, 0.0, 0.0, 0.0, 0.0}, {16, 0.0, 0.0, 0.0, 0.0}, 
+  {17, 0.0, 0.0, 0.0, 0.0}, {18, 0.0, 0.0, 0.0, 0.0}, 
+  {19, 0.0, 0.0, 0.0, 0.0}, {20, 0.0, 0.0, 0.0, 0.0}, 
+  {21, 0.0, 0.0, 0.0, 0.0}, {22, 0.0, 0.0, 0.0, 0.0}, 
+  {23, 0.0, 0.0, 0.0, 0.0}, {24, 0.0, 0.0, 0.0, 0.0}, 
+}; 
+
+esp_err_t mainLoop() {
+  // Timing state
+  static int64_t last_send_time_us = 0;
+  static int64_t last_state_log_us = 0;
+  static int64_t last_battery_update_us = 0;
+  static int64_t last_waiting_log_us = 0;
+  static uint16_t frame_seq = 0; 
+  static size_t sample_idx_to_send = 0; 
+
+  static bool was_connected = false; 
+    
+  const int64_t ACK_TIMEOUT_US = 30'000'000;  // 30 seconds
+
+  if (!ble_module_ptr) {
+    logger.error("ble_module_ptr is NULL!");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  int64_t now_us = esp_timer_get_time();
+  bool is_connected = ble_module_ptr->is_connected();
+  if (!is_connected) {
+    if (was_connected) {
+      logger.info("Device disconnected – resetting state");
+      was_connected = false;
+      battery_level = 100;
+    }
+    
+    if (now_us - last_waiting_log_us >= 10'000'000) {  // Every 10 seconds
+      last_waiting_log_us = now_us;
+      logger.info("Waiting for BLE connection…");
+    }
+
+    return ESP_OK; 
+  }
+
+  if (!was_connected) {
+    logger.info("Device connected! Getting device info…");
+    auto devs = ble_module_ptr->get_connected_device_infos();
+    for (const auto &d : devs) {
+      logger.info("Device: {}, RSSI: {} dBm", ble_module_ptr->get_device_name(d), ble_module_ptr->get_rssi(d));
+    }
+    was_connected = true;
+    ble_module_ptr->reset_ack_on_connect();
+    last_send_time_us = now_us;
+  }
+
+  // ACK/timeout handling
+  bool can_send = ble_module_ptr->is_ack_received();
+  bool timeout = (now_us - last_send_time_us) >= ACK_TIMEOUT_US;
+
+  // Periodic status logging (every 5 seconds)
+  if (now_us - last_state_log_us >= 5'000'000) {
+    last_state_log_us = now_us;
+    int64_t secs_since_last = (now_us - last_send_time_us) / 1'000'000;
+    if (can_send) {
+      logger.info("Ready to send (ACK received or first-send pending)");
+    } else {
+      logger.info("Waiting for ACK – {} s since last send", secs_since_last);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // SEND LOOP
+  // ---------------------------------------------------------------------
+  while (can_send || timeout) {
+    // We have a frame - pack into bulk format
+    uint16_t sample_count = 24 - sample_idx_to_send >= BLE::SAMPLES_PER_FRAME 
+      ? BLE::SAMPLES_PER_FRAME 
+      : 24 - sample_idx_to_send; 
+
+    uint16_t payload_len = sample_count * ((uint16_t) sizeof(BLE::FrameSample)); 
+    
+    BLE::Frame frame {
+      .header = {
+        .frame_seq = frame_seq++,
+        .sample_count = sample_count,
+        .payload_len = payload_len,  
+        .flags = 0, 
+      }, 
+      .payload = {}
+    };
+
+    memcpy(frame.payload, &samples_to_send[sample_idx_to_send], payload_len); 
+
+    logger.info("Sending bulk frame seq {} (244 B)", (unsigned int) frame.header.frame_seq);
+    ble_module_ptr->notify_quaternion(reinterpret_cast<const uint8_t*>(&frame), sizeof(frame));
+    ble_module_ptr->reset_ack();
+    last_send_time_us = now_us;
+
+    sample_idx_to_send = sample_count + sample_idx_to_send >= 24 ? 0 : sample_count + sample_idx_to_send; 
+
+    // Re-evaluate send condition
+    can_send = ble_module_ptr->is_ack_received();
+    timeout = false;
+  }
+
+  // ---------------------------------------------------------------------
+  // Battery update (every 50 seconds)
+  // ---------------------------------------------------------------------
+  if (now_us - last_battery_update_us >= 50'000'000) {
+    last_battery_update_us = now_us;
+    ble_module_ptr->set_battery_level(battery_level);
+    battery_level = (battery_level == 0) ? 100 : battery_level - 1;
+    logger.info("Battery level: {}%", battery_level);
+  }
+
+  return ESP_OK;
+}
+
+// ---------------------------------------------------------------------
+//  Application Entry Point
+// ---------------------------------------------------------------------
+
 extern "C" void app_main() {
   if (initSystem() != ESP_OK) {
     logger.error("Failed initializing a system.");
@@ -504,6 +689,7 @@ extern "C" void app_main() {
   ); 
 
   while (true) {
-    std::this_thread::sleep_for(1s); 
+    mainLoop(); 
+    std::this_thread::sleep_for(10ms); 
   }
 }

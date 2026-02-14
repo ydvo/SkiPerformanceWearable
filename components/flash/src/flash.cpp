@@ -1,4 +1,6 @@
 #include "flash.hpp"
+#include "flash_log.hpp"
+#include "imu.hpp"
 
 #include "esp_flash.h"
 #include "spi_flash_chip_driver.h"
@@ -109,4 +111,14 @@ namespace STORAGE {
   size_t SpiFlashDevice::page_size() const {
     return chip_->page_size; 
   }
-}
+
+  // Create the SPI flash device instance
+  SpiFlashDevice flash_device({
+      .host = SPI2_HOST,
+      .cs = GPIO_NUM_10
+  });
+
+} // namespace STORAGE
+
+
+extern STORAGE::FlashLog<SENSORS::Imu::Quaternion> flash_log;

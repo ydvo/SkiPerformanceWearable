@@ -1,20 +1,13 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.espIdfPath": "/Users/work/esp/v5.5.1/esp-idf",
-  "idf.toolsPath": "/Users/work/.espressif",
-  "idf.pythonInstallPath": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
-  "clangd.path": "/Users/work/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
-  "clangd.arguments": [
-    "--background-index",
-    "--query-driver=**",
-    "--compile-commands-dir=/Users/work/Documents/college/ENGS89/ski-wearable/build"
-  ],
+  "idf.flashType": "UART",
+  "idf.portWin": "COM6",
   "idf.port": "/dev/tty.usbmodem2101",
-  "idf.flashType": "UART"
+  "idf.currentSetup": "/Users/work/esp/v5.5.1/esp-idf"
 }
