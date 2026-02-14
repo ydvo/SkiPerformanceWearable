@@ -8,5 +8,6 @@
   },
   "idf.flashType": "UART",
   "idf.portWin": "COM6",
-  "idf.port": "/dev/tty.usbmodem2101"
+  "idf.port": "/dev/tty.usbmodem2101",
+  "idf.currentSetup": "/Users/work/esp/v5.5.1/esp-idf"
 }
