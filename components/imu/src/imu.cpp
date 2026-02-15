@@ -1,13 +1,20 @@
 #include "imu.hpp"
+#include "esp_log.h"
 #include "fast_math.hpp"
+#include "freertos/projdefs.h"
 #include <system_error>
 
 namespace SENSORS {
 
+static const char *TAG{"IMU"};
+
+// Forward declaration
+Imu::Value calibrate_mag(espp::icm20948::Value raw);
+
 // constructor
 Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {}
 
-Imu::Imu(ICM::Config cfg) : imu_(cfg), filter_(MADGWICK_BETA) {}
+Imu::Imu(ICM::Config cfg) : imu_(cfg), filter_(MADGWICK_BETA), enable_magnetometer_{1} {}
 
 // Construct default config from i2c
 ICM::Config Imu::make_default_config(espp::I2c &i2c) {
@@ -27,13 +34,35 @@ ICM::Config Imu::make_default_config(espp::I2c &i2c) {
 
 bool Imu::init() {
   std::error_code ec;
-  imu_.init(ec);
 
-  if (ec) {
+  // initialize imu
+  if (!imu_.init(ec)) {
+    ESP_LOGE(TAG, "Error initializing: %s", ec.message().c_str());
     return false;
-  } else {
-    return true;
   }
+
+  // set and enable low pass filters
+  if (!imu_.set_accelerometer_dlpf(ACCEL_LPF_BANDWIDTH, ec)) {
+    ESP_LOGE(TAG, "Error setting accel lpf bandwidth: %s", ec.message().c_str());
+    return false;
+  }
+
+  if (!imu_.set_accelerometer_dlpf_enabled(true, ec)) {
+    ESP_LOGE(TAG, "Error enabling accel lpf: %s", ec.message().c_str());
+    return false;
+  }
+
+  if (!imu_.set_gyroscope_dlpf(GYRO_LPF_BANDWIDTH, ec)) {
+    ESP_LOGE(TAG, "Error setting gyro lpf bandwidth: %s", ec.message().c_str());
+    return false;
+  }
+
+  if (!imu_.set_gyroscope_dlpf_enabled(true, ec)) {
+    ESP_LOGE(TAG, "Error enabling gyro lpf: %s", ec.message().c_str());
+    return false;
+  }
+
+  return true;
 }
 
 // whoami
@@ -70,14 +99,46 @@ bool Imu::update(float dt) {
   raw_.mag = imu_.get_magnetometer();
   raw_.temperature = imu_.get_temperature();
 
+  // apply magnetometer calibration
+  auto calibrated_mag = apply_mag_cal(raw_.mag);
+
   // apply madgwick filter
-  filter_.update(dt, raw_.accel.x, raw_.accel.y, raw_.accel.z, espp::deg_to_rad(raw_.gyro.x),
-                 espp::deg_to_rad(raw_.gyro.y), espp::deg_to_rad(raw_.gyro.z), raw_.mag.x,
-                 raw_.mag.y, raw_.mag.z);
+  if (enable_magnetometer_) {
+    filter_.update(dt, raw_.accel.x, raw_.accel.y, raw_.accel.z, espp::deg_to_rad(raw_.gyro.x),
+                   espp::deg_to_rad(raw_.gyro.y), espp::deg_to_rad(raw_.gyro.z), calibrated_mag.x,
+                   calibrated_mag.y, calibrated_mag.z);
+  } else {
+    filter_.update(dt, raw_.accel.x, raw_.accel.y, raw_.accel.z, espp::deg_to_rad(raw_.gyro.x),
+                   espp::deg_to_rad(raw_.gyro.y), espp::deg_to_rad(raw_.gyro.z));
+  }
 
   // get quaternion values
   filter_.get_quaternion(orientation_.w, orientation_.x, orientation_.y, orientation_.z);
 
   return true;
 }
+
+Imu::Value Imu::apply_mag_cal(espp::icm20948::Value raw) {
+  double m_raw[3] = {raw.x, raw.y, raw.z};
+
+  // Step 1: Subtract hard-iron offset
+  double m_corr[3];
+  for (int i = 0; i < 3; i++)
+    m_corr[i] = m_raw[i] - b_[i];
+
+  // Step 2: Apply soft-iron correction matrix
+  double m_cal[3] = {0};
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      m_cal[i] += A_[i][j] * m_corr[j];
+    }
+  }
+
+  // store value and orient axes
+  Imu::Value calibrated = {static_cast<float>(m_cal[0]), -static_cast<float>(m_cal[1]),
+                           -static_cast<float>(m_cal[2])};
+
+  return calibrated;
+}
+
 } // namespace SENSORS

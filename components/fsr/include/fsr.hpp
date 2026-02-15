@@ -6,7 +6,7 @@
 #include "hal/adc_types.h"
 #include "oneshot_adc.hpp"
 
-namespace SENSOR {
+namespace SENSORS {
 
 /* Constants */
 
@@ -112,4 +112,4 @@ private:
   float baseline_mv_;                     // baseline voltage (no pressure)
   float max_mv_;                          // max voltage (full pressure)
 };
-} // namespace SENSOR
+} // namespace SENSORS
