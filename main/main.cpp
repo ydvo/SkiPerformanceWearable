@@ -24,6 +24,7 @@
 #include "logger.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <stdint.h>
 #include <vector>
@@ -37,10 +38,6 @@ constexpr uint64_t sensor_polling_period{10000}; // 10 ms = 10_000 us
 //  Hardware Pin Definitions
 // ---------------------------------------------------------------------
 
-// ICM-20948 IMU
-constexpr uint8_t ICM20948_ADDRESS{0x69};
-constexpr uint32_t ICM20948_I2C_HZ{400000}; // 400 kHz
-
 // I2C pins
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
@@ -49,7 +46,6 @@ constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 // fsr pin
 constexpr adc_channel_t fsr_pin{ADC_CHANNEL_4};
 
-/* Components */
 // SPI2 pins (for flash storage)
 static constexpr auto spi2_sck{GPIO_NUM_12};
 static constexpr auto spi2_mosi{GPIO_NUM_11};
@@ -88,6 +84,7 @@ STORAGE::SpiFlashDevice spi_flash({.host = SPI2_HOST, .cs = flash_spi_cs});
 
 // Flash Log
 STORAGE::FlashLog<STORAGE::Quaternion> flash_log(spi_flash);
+
 // IMU
 SENSORS::Imu imu(i2c);
 
@@ -100,21 +97,28 @@ SENSORS::fsr pressure_sensor(fsr_pin);
 // Haptics
 HAPTICS::DRV2605L haptic(i2c);
 
-/* Flags */
-bool force_sensor_pressed = false;
-
 // BLE Module
 BLE::BleModule *ble_module_ptr = nullptr;
 
 // State Variables
-float dt = 0;
 uint8_t battery_level = 100;
 
+// ---------------------------------------------------------------------
+// Flags
+// ---------------------------------------------------------------------
+
+bool force_sensor_pressed = false;
+
+// ---------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------
+
+static constexpr size_t MAX_FRAMES{12};
 /**
  * Flushes the flash contents over UART
  */
 void flush_flash_to_host() {
-  STORAGE::FlashLog<STORAGE::Quaternion>::Frame frames[8];
+  STORAGE::FlashLog<STORAGE::Quaternion>::Frame frames[MAX_FRAMES];
   size_t frames_read;
   uint32_t read_addr = flash_log.read_addr();
   uint32_t start_addr = read_addr;
@@ -122,11 +126,13 @@ void flush_flash_to_host() {
   printf("START\n");
 
   for (;;) {
-    if (flash_log.read_immut(frames, 8, &frames_read, read_addr, &read_addr) != ESP_OK) {
+    // read MAX_FRAMES frames
+    if (flash_log.read_immut(frames, MAX_FRAMES, &frames_read, read_addr, &read_addr) != ESP_OK) {
       printf("ERROR\n");
       break;
     }
 
+    // Check if end of flash reached
     if (frames_read == 0) {
       printf("END\n");
       printf("Completed reading range 0x%x - 0x%x\n", (unsigned int)start_addr,
@@ -134,6 +140,10 @@ void flush_flash_to_host() {
       break;
     }
 
+    // for each frame, print out:
+    //    - first time stamp in us
+    //    - samples
+    //    - last time stamp in us
     for (size_t i = 0; i < frames_read; ++i) {
       auto &frame = frames[i];
 
@@ -149,11 +159,13 @@ void flush_flash_to_host() {
   }
 }
 
+// Task handles for core tasks
 static TaskHandle_t flash_writer_task_handle = nullptr;
 static TaskHandle_t capture_task_handle = nullptr;
 static TaskHandle_t upload_task_handle = nullptr;
 static TaskHandle_t control_task_handle = nullptr;
 
+// constants for notifications
 constexpr uint32_t NOTIFY_BUTTON_PRESS = (1 << 0);
 constexpr uint32_t NOTIFY_FLASH_DONE = (1 << 1);
 constexpr uint32_t NOTIFY_UPLOAD_DONE = (1 << 2);
@@ -164,19 +176,21 @@ constexpr uint32_t NOTIFY_UPLOAD_BLE = (1 << 4);
  * Flash Writer Task
  */
 RingbufHandle_t flash_writer_buf = nullptr;
+
 struct quat_sample_t {
   STORAGE::Quaternion quat;
   int64_t timestamp_us;
 };
+
 void flash_writer_task(void *arg) {
   quat_sample_t *item;
   size_t size;
 
   for (;;) {
-    item = (quat_sample_t *)xRingbufferReceive(flash_writer_buf, &size,
-                                               pdMS_TO_TICKS(50) // timeout
-    );
+    // attempt to retrieve an item from buffer
+    item = (quat_sample_t *)xRingbufferReceive(flash_writer_buf, &size, pdMS_TO_TICKS(50));
 
+    // if retrieved store in flash
     if (item) {
       if (size != 0 && flash_log.append(item->quat, item->timestamp_us) != ESP_OK) {
         ESP_LOGE("FLASH_WRITER", "Failed to append quat into flash log.");
@@ -382,6 +396,8 @@ esp_err_t initSystem() {
   // Initialize LED
   LED::led red_led = LED::led(LED::RED_LED);
 
+  // create i2c instance
+  logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
   std::error_code ec;
   i2c.init(ec); // initialize
   if (ec) {
@@ -389,24 +405,60 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(100));
+  vTaskDelay(pdMS_TO_TICKS(100)); // give i2c time to startup
 
   // init imu
-  bool imu_initialized = imu.init();
-  // ensure imu is configured correctly
-  if (!imu_initialized) {
+  if (imu.init()) {
+    logger.info("Imu initialized");
+  } else {
     logger.error("Failed to initialize imu");
     return ESP_ERR_INVALID_STATE;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(100)); // give imu time to startup before first i2c read
+  // check if battery is connected
+  if (!battery.isDeviceReady())
+    logger.error("Could not initialize fuel gauge. Check battery connection");
 
-  uint8_t test = imu.get_whoami();
-  if (test != 0xEA) {
-    logger.error("Invalid imu device id {}", test);
+  // setup force sensor
+  pressure_sensor.set_calibration(0.00f, 2893.5f);
+
+  // Haptic setup
+  if (haptic.init()) {
+
+    // Set to internal trigger mode
+    haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+
+    // Select ERM motor
+    haptic.select_motor(HAPTICS::DRV2605L::MotorType::ERM);
+
+    // Select library
+    haptic.select_library(HAPTICS::DRV2605L::Library::ERM_LIB_A);
+
+    // Set waveform sequence
+    // haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
+    // haptic.set_waveform(1, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK); // double click
+    // haptic.set_waveform(2, HAPTICS::DRV2605L::EFFECTS::LONG_BUZZ);    // buzz
+    // haptic.set_waveform(3, 0);                                        // End of sequence
+    haptic.set_waveform(0, HAPTICS::DRV2605L::EFFECTS::DOUBLE_CLICK);
+    haptic.set_waveform(1, 0);
+
+    // Trigger the waveform
+    haptic.go();
+
+    // Set threshold to 50%
+    float threshold = 0.5f;
+    threshold = pressure_sensor.get_baseline() +
+                (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * threshold;
+    pressure_sensor.set_pressure_threshold(threshold);
+
+    // Wait for effect to complete
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    haptic.set_mode(HAPTICS::DRV2605L::Mode::REALTIME_PLAYBACK);
+    haptic.set_realtime_value(0);
+  } else {
+    logger.error("Could not initialize haptics");
   }
-
-  logger.info("Initialized imu");
 
   red_led.turn_on();
 
@@ -485,7 +537,7 @@ BLE::FrameSample samples_to_send[24] = {
     {22, 0.0, 0.0, 0.0, 0.0}, {23, 0.0, 0.0, 0.0, 0.0}, {24, 0.0, 0.0, 0.0, 0.0},
 };
 
-esp_err_t mainLoop(auto dt) {
+esp_err_t mainLoop() {
   // Timing state
   static int64_t last_send_time_us = 0;
   static int64_t last_state_log_us = 0;
@@ -617,17 +669,7 @@ extern "C" void app_main() {
   xTaskCreate(upload_task, "upload", 4096, NULL, 5, &upload_task_handle);
 
   while (true) {
-    // get elapsed time in between loops
-    auto now{std::chrono::system_clock::now()};
-    static auto t0{now};
-    auto t1{now};
-    std::chrono::duration<float> dt_ = t1 - t0;
-    auto dt = dt_.count();
-    t0 = t1;
-    // logger.info("Elapsed time in float seconds: {}", dt);
-
-    mainLoop(dt); // run repeatedly
-
-    vTaskDelay(pdMS_TO_TICKS(100));
+    mainLoop();
+    std::this_thread::sleep_for(10ms);
   }
 }
