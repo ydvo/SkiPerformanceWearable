@@ -20,7 +20,20 @@ bool DRV2605L::init() {
 
   // Check if device is present and not in over-current protection
   // Expected value is 0xE0 (device ID = 7, no errors)
-  return (status & 0xE0) == EXPECTED_STATUS;
+  if ((status & 0xE0) != EXPECTED_STATUS)
+    return false;
+
+  // default inits
+  // Set to internal trigger mode
+  set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+
+  // Select ERM motor
+  select_motor(HAPTICS::DRV2605L::MotorType::ERM);
+
+  // Select library
+  select_library(HAPTICS::DRV2605L::Library::ERM_LIB_A);
+
+  return true;
 }
 
 /*
