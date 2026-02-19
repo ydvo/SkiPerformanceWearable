@@ -1,4 +1,6 @@
+#include "NimBLELocalValueAttribute.h"
 #include "flash_log.hpp"
+#include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 #include "imu.hpp"
@@ -46,24 +48,6 @@ static constexpr auto spi2_sck{GPIO_NUM_12};
 static constexpr auto spi2_mosi{GPIO_NUM_11};
 static constexpr auto spi2_miso{GPIO_NUM_13};
 static constexpr auto flash_spi_cs{GPIO_NUM_10};
-
-// ---------------------------------------------------------------------
-// Setup for Control Flow
-// ---------------------------------------------------------------------
-// possible states
-enum SYSTEM_STATES { SLEEP, SETUP, IDLE, READY, RUNNING, ERROR };
-enum EVENTS {
-  BLE_CONNECTED = BIT0,
-  BLE_DISCONNECTED = BIT1,
-  ACTIVE = BIT2,
-  BLE_IDLE = BIT3,
-  START_RUN = BIT4
-};
-
-// state var
-static SYSTEM_STATES system_state;
-static EventGroupHandle_t system_events;
-
 // ---------------------------------------------------------------------
 //  Global Objects
 // ---------------------------------------------------------------------
@@ -110,20 +94,50 @@ Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPI
 // ---------------------------------------------------------------------
 
 // button debounce
-constexpr uint32_t BOOT_BUTTON_DEBOUNCE_MS{200};
+static constexpr uint32_t BOOT_BUTTON_DEBOUNCE_MS{200};
 
 // force sensor calibration value defaults
-constexpr float FSR_LOW{0.00f};
-constexpr float FSR_HIGH{2893.5f};
+static constexpr float FSR_LOW{0.00f};
+static constexpr float FSR_HIGH{2893.5f};
 
 // ring buffer size
-constexpr uint8_t RINGBUFFER_SIZE{32};
+static constexpr uint8_t RINGBUFFER_SIZE{32};
 
 // number of samples to send over ble
-constexpr uint8_t NUM_SAMPlES_BLE{24};
+static constexpr uint8_t NUM_SAMPlES_BLE{24};
 
 // imu frequency
-constexpr float IMU_FREQ{100};
+static constexpr float IMU_FREQ{100};
+
+// length of event queue
+static constexpr uint8_t EVENT_QUEUE_LENGTH{8};
+
+// ---------------------------------------------------------------------
+// Setup for Control Flow
+// ---------------------------------------------------------------------
+// possible states
+enum SYSTEM_STATES {
+  SLEEP = BIT0,
+  IDLE = BIT1,
+  READY = BIT2,
+  RUNNING = BIT3,
+  ERROR = BIT4,
+};
+
+// state var
+static EventGroupHandle_t system_state;
+
+// events
+enum EVENTS {
+  BLE_CONNECTED,
+  BLE_DISCONNECTED,
+  TOGGLE_RUN,
+};
+
+// statically allocated event queue
+static EVENTS eventQueueStorage[EVENT_QUEUE_LENGTH];
+static StaticQueue_t eventQueueStruct;
+static QueueHandle_t eventQueue;
 
 // ---------------------------------------------------------------------
 // Tasks
@@ -138,19 +152,19 @@ struct quat_sample_t {
   int64_t timestamp_us;
 };
 
-// imu task
+// Capture sensor data and push to ring buffer
 void imuTask(void *arg) {
   TickType_t lastWake;
   quat_sample_t s;
 
   for (;;) {
     // Wait until Running
-    xEventGroupWaitBits(system_events, RUNNING, false, true, portMAX_DELAY);
+    xEventGroupWaitBits(system_state, RUNNING, false, true, portMAX_DELAY);
 
     // get current time for scheduling
     lastWake = xTaskGetTickCount();
 
-    while (xEventGroupGetBits(system_events) & RUNNING) {
+    while (xEventGroupGetBits(system_state) & RUNNING) {
       // save timestamp
       s.timestamp_us = esp_timer_get_time();
 
@@ -170,21 +184,129 @@ void imuTask(void *arg) {
   }
 }
 
+// TODO: Task to write from ringbuffer to flash
+
+// TODO: Task to upload from flash to BLE
+
+// TODO: Task to handle quadrature
+
+// ---------------------------------------------------------------------
+// State Machine
+// ---------------------------------------------------------------------
+
+// idle mode callback to sleep everything and start ble_advertising
+esp_err_t advertiseBLE() {
+  /* TODO:
+   *  - sleep imu
+   *  - sleep fsr
+   *  - haptics off prob
+   */
+
+  // Start advertising
+  ESP_RETURN_ON_ERROR(ble.start_advertising(), "BLE", "Failed to start advertising");
+
+  logger.info("BLE advertising started. Device name: {}", ble.get_name());
+  logger.info("Connect with your phone's BLE scanner app");
+}
+
+esp_err_t startSensors() {
+  /* TODO:
+   *  - wake imu
+   *  - wake fsr
+   *  - start haptics
+   */
+}
+
+// helper to transition states
+static void switch_states(EventBits_t currstate, EventBits_t nextstate) {
+  // set next state
+  xEventGroupSetBits(system_state, nextstate);
+  // clear previous state
+  xEventGroupClearBits(system_state, currstate);
+}
+
+// state machine
+//  - transitions on EVENTS
+void controlTask(void *arg) {
+  EVENTS e;
+  while (true) {
+    // wait for events to transition states
+    if (xQueueReceive(eventQueue, &e, portMAX_DELAY)) {
+
+      // get current state
+      EventBits_t currstate = xEventGroupGetBits(system_state);
+
+      // transition between states
+      switch (currstate) {
+      case SLEEP:
+        // TODO: sleep state
+        break;
+
+      case IDLE: // waiting for ble connection
+        switch (e) {
+        case BLE_CONNECTED:
+          switch_states(IDLE, READY);
+          break;
+
+        default:
+          break;
+        }
+        break;
+
+      case READY: // connected waiting for start
+        // on run start, start collecting data
+        switch (e) {
+        case TOGGLE_RUN:
+          startSensors();
+          switch_states(READY, RUNNING);
+          break;
+
+        case BLE_DISCONNECTED:
+          advertiseBLE();
+          switch_states(READY, IDLE);
+          break;
+
+        default:
+          break;
+        }
+
+        break;
+
+      case RUNNING: // logging and transmitting data
+        switch (e) {
+        case TOGGLE_RUN:
+          switch_states(RUNNING, READY);
+          break;
+
+        case BLE_DISCONNECTED:
+          advertiseBLE();
+          switch_states(RUNNING, IDLE);
+          break;
+
+        default:
+          break;
+        }
+        break;
+
+      default: // could switch to default state being IDLE
+        // Indicate Error
+        xEventGroupSetBits(system_state, ERROR);
+        logger.error("Error in state transition");
+      }
+    }
+  }
+}
 // ---------------------------------------------------------------------
 // ISRs
 // ---------------------------------------------------------------------
+// on boot button press
 static void IRAM_ATTR boot_button_isr(void *arg) {
-  static bool prev_state = 0;
-
-  // set or clear start signal
-  if (prev_state) {
-    xEventGroupClearBits(system_events, START_RUN);
-  } else {
-    xEventGroupSetBits(system_events, START_RUN);
-  }
-  // toggle state
-  prev_state ^= prev_state;
+  EVENTS e = TOGGLE_RUN;
+  // Start Run: if in idle -> running
+  xQueueSendFromISR(eventQueue, &e, 0);
 }
+
+// TODO: interpret quadrature input
 
 // ---------------------------------------------------------------------
 //  BLE
@@ -203,14 +325,23 @@ BLE::FrameSample samples_to_send[NUM_SAMPlES_BLE] = {
 
 // callbacks to change system state on connection status
 void on_ble_connect(NimBLEConnInfo &info) {
-  xEventGroupSetBits(system_events, BLE_CONNECTED);
-  xEventGroupClearBitsFromISR(system_state, BLE_DISCONNECTED);
+  EVENTS e = BLE_CONNECTED;
+  BaseType_t status = xQueueSend(eventQueue, &e, 0);
+  if (status != pdTRUE) {
+    logger.warn("BLE connect event dropped");
+  }
+
   logger.info("BLE: Client connected \n");
 }
 
 void on_ble_disconnect(NimBLEConnInfo &info, espp::BleGattServer::DisconnectReason reason) {
-  xEventGroupSetBits(system_events, BLE_DISCONNECTED);
-  xEventGroupClearBitsFromISR(system_state, BLE_CONNECTED);
+
+  EVENTS e = BLE_DISCONNECTED;
+  BaseType_t status = xQueueSend(eventQueue, &e, 0);
+  if (status != pdTRUE) {
+    logger.warn("BLE disconnect event dropped");
+  }
+
   logger.info("BLE: Client disconnected \n");
 }
 
@@ -251,7 +382,7 @@ esp_err_t send_ble() {
     logger.info("Device connected! Getting device info…");
     auto devs = ble.get_connected_device_infos();
     for (const auto &d : devs) {
-      logger.info("Device: {}, RSSI: {} dBm", ble.get_device_name(d), ble.get_rssi(d));
+      logger.info("Device: {}, RSSI: {} dBm", ble.get_connected_device_name(d), ble.get_rssi(d));
     }
     was_connected = true;
     ble.reset_ack_on_connect();
@@ -438,11 +569,13 @@ esp_err_t initSystem() {
 
   logger.info("BLE module initialized successfully");
 
-  // Start advertising
-  ESP_RETURN_ON_ERROR(ble.start_advertising(), "SYS_INIT", "Failed to start advertising");
-
-  logger.info("BLE advertising started. Device name: {}", ble_config.device_name);
-  logger.info("Connect with your phone's BLE scanner app");
+  // init event queue
+  eventQueue = xQueueCreateStatic(EVENT_QUEUE_LENGTH, sizeof(EVENTS), (uint8_t *)eventQueueStorage,
+                                  &eventQueueStruct);
+  if (eventQueue == nullptr) {
+    ESP_LOGE("SYS_INIT", "Failed to create event queue");
+    return ESP_ERR_INVALID_STATE;
+  }
 
   // turn on led to indicate successful init
   red_led.turn_on();
@@ -461,7 +594,11 @@ extern "C" void app_main() {
   } // called once
 
   // Create Eventgroup
-  system_events = xEventGroupCreate();
+  system_state = xEventGroupCreate();
+
+  // set initial state
+  advertiseBLE();
+  xEventGroupSetBits(system_state, IDLE);
 
   // Create Tasks
   // Create a task that will write samples to the flash
@@ -475,7 +612,4 @@ extern "C" void app_main() {
 
   // Create a task that will transmit data
   xTaskCreate(upload_task, "upload", 4096, NULL, 5, &upload_task_handle);
-
-  // start system in idle
-  system_state = idle;
 }
