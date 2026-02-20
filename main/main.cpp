@@ -19,6 +19,7 @@
 
 #include "GPIO.hpp"
 #include "ble.hpp"
+#include "encoder.hpp"
 #include "flash.hpp"
 #include "fsr.hpp"
 #include "fuelgauge.hpp"
@@ -49,6 +50,11 @@ static constexpr auto spi2_sck{GPIO_NUM_12};
 static constexpr auto spi2_mosi{GPIO_NUM_11};
 static constexpr auto spi2_miso{GPIO_NUM_13};
 static constexpr auto flash_spi_cs{GPIO_NUM_10};
+
+// Encoder pins (quadrature channels A and B) -- update to actual GPIOs
+constexpr gpio_num_t encoder_pin_a{GPIO_NUM_7};
+constexpr gpio_num_t encoder_pin_b{GPIO_NUM_8};
+constexpr uint32_t encoder_cpr{600}; // counts per revolution -- update for your encoder
 // ---------------------------------------------------------------------
 //  Global Objects
 // ---------------------------------------------------------------------
@@ -89,6 +95,9 @@ BLE::BleModule ble;
 
 Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
                          Common::GPIO::PULLUP);
+
+// Rotary encoder for sensor fusion validation
+SENSORS::Encoder encoder(encoder_pin_a, encoder_pin_b, encoder_cpr);
 
 // ---------------------------------------------------------------------
 // Constants
@@ -174,6 +183,7 @@ static TaskHandle_t control_task_handle = nullptr;
 static TaskHandle_t upload_task_handle = nullptr;
 static TaskHandle_t battery_task_handle = nullptr;
 static TaskHandle_t haptic_task_handle = nullptr;
+static TaskHandle_t encoder_task_handle = nullptr;
 
 // queue for imu data
 static QueueHandle_t imuQueue = nullptr;
@@ -642,6 +652,21 @@ void controlTask(void *arg) {
     }
   }
 }
+// Encoder monitoring task -- prints angle on change
+static void encoderTask(void *pvParameters) {
+  int32_t prev_count = encoder.get_count();
+
+  for (;;) {
+    int32_t count = encoder.get_count();
+    if (count != prev_count) {
+      float angle = encoder.get_angle();
+      ESP_LOGI("ENCODER", "count=%ld  angle=%.2f deg", (long)count, angle);
+      prev_count = count;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
 // ---------------------------------------------------------------------
 // ISRs
 // ---------------------------------------------------------------------
@@ -651,8 +676,6 @@ static void IRAM_ATTR boot_button_isr(void *arg) {
   // Start Run: if in idle -> running
   xQueueSendFromISR(eventQueue, &e, 0);
 }
-
-// TODO: interpret quadrature input
 
 // ---------------------------------------------------------------------
 //  BLE
@@ -696,6 +719,10 @@ esp_err_t initSystem() {
       boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, nullptr),
       "SYS_INIT", "Failed to set interrupt for boot button.");
   logger.info("Enabled Boot Button");
+
+  // Initialize rotary encoder
+  ESP_RETURN_ON_ERROR(encoder.init(), "SYS_INIT", "Failed to initialize encoder.");
+  logger.info("Encoder initialized");
 
   // Initialize LED
   LED::led red_led = LED::led(LED::RED_LED);
@@ -836,6 +863,9 @@ extern "C" void app_main() {
 
   // Create a task that plays haptic events from the queue
   xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
+
+  // Create a task that monitors the rotary encoder for testing
+  xTaskCreate(encoderTask, "encoder", 2048, NULL, 2, &encoder_task_handle);
 
   // Indicate boot complete
   haptic_notify(HapticEvent::BOOT);
