@@ -5,7 +5,7 @@
 namespace STORAGE {
 
 constexpr uint32_t MAGIC = 0xDEADBEEF;
-constexpr size_t SAMPLES_PER_FRAME = 14; 
+constexpr size_t SAMPLES_PER_FRAME = 10; 
 
 struct __attribute__((packed)) Quaternion {
   float w;
@@ -19,16 +19,15 @@ static_assert(sizeof(Quaternion) == 16, "Quaternion must be 16 bytes packed.");
 template <typename T>
 class FlashLog { 
 public: 
-  struct Payload {
-    int64_t start_t_us;
-    T data[SAMPLES_PER_FRAME]; 
-    int64_t end_t_us;
+  struct Sample {
+    uint64_t timestamp_us; 
+    T data;
   } __attribute__((packed));
 
   struct Frame {
     uint32_t magic; 
     uint32_t seq;
-    Payload payload;  
+    std::array<Sample, SAMPLES_PER_FRAME> payload;  
     uint32_t padding; 
     uint32_t crc;
   } __attribute__((packed));
@@ -51,9 +50,8 @@ private:
   uint32_t seq_{0}; 
 
   // batching
-  std::array<T, SAMPLES_PER_FRAME> sample_buffer_{}; 
+  std::array<Sample, SAMPLES_PER_FRAME> sample_buffer_{}; 
   uint32_t sample_idx_{0}; 
-  uint64_t start_timestamp_us_{0}; 
 
   STORAGE::SpiFlashDevice &dev_;
 
@@ -64,6 +62,6 @@ private:
   bool would_overrun(uint32_t next_write) const;
 
   esp_err_t erase_sector(uint32_t addr);
-  esp_err_t flush(const Payload& payload); 
+  esp_err_t flush(const std::array<Sample, SAMPLES_PER_FRAME>& payload); 
 }; 
 }

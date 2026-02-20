@@ -32,18 +32,16 @@ namespace STORAGE {
 
   template <typename T>
   esp_err_t FlashLog<T>::append(const T &sample, const uint64_t timestamp_us) {
-    if (sample_idx_ == 0) start_timestamp_us_ = timestamp_us; 
-
-    sample_buffer_[sample_idx_++] = sample; 
+    sample_buffer_[sample_idx_++] = {
+      .timestamp_us = timestamp_us, 
+      .data = sample
+    };  
 
     if (sample_idx_ < SAMPLES_PER_FRAME) {
       return ESP_OK; 
     }
 
-    Payload payload {};
-    payload.start_t_us = start_timestamp_us_; 
-    memcpy(payload.data, sample_buffer_.data(), sizeof(sample_buffer_)); 
-    payload.end_t_us = timestamp_us; 
+    std::array<Sample, SAMPLES_PER_FRAME> payload {sample_buffer_};
 
     sample_idx_ = 0; 
     return flush(payload); 
@@ -67,7 +65,7 @@ namespace STORAGE {
   }
 
   template <typename T>
-  esp_err_t FlashLog<T>::flush(const Payload &payload) {
+  esp_err_t FlashLog<T>::flush(const std::array<Sample, SAMPLES_PER_FRAME> &payload) {
     uint32_t next = next_addr(write_addr_); 
     if (would_overrun(next)) return ESP_ERR_NO_MEM; 
 
