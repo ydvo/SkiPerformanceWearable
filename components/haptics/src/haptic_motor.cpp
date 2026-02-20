@@ -92,6 +92,21 @@ void DRV2605L::go() {
 }
 
 /*
+ * Program the sequencer with up to 8 effects and fire go().
+ * Slots beyond `count` are zeroed to terminate the sequence.
+ */
+void DRV2605L::play(const uint8_t *effects, uint8_t count) {
+  constexpr uint8_t MAX_SLOTS = 8;
+  if (count > MAX_SLOTS)
+    count = MAX_SLOTS;
+
+  for (uint8_t i = 0; i < MAX_SLOTS; i++) {
+    write_register(REGISTERS::WAVESEQ1 + i, (i < count) ? effects[i] : 0x00);
+  }
+  go();
+}
+
+/*
  * Stop waveform playback
  */
 void DRV2605L::stop() {
