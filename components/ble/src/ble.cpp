@@ -44,6 +44,15 @@ esp_err_t BleModule::init() {
   return ESP_OK;
 }
 
+void BleModule::reconfigure(const Config &config) {
+  if (initialized_) {
+    ESP_LOGE(TAG, "reconfigure() called after init() - ignoring");
+    return;
+  }
+  config_ = config;
+  ESP_LOGI(TAG, "BleModule reconfigured (device_name: %s)", config_.device_name.c_str());
+}
+
 esp_err_t BleModule::start_advertising() {
   if (!initialized_) {
     ESP_LOGE(TAG, "BLE not initialized, cannot start advertising");
@@ -76,13 +85,13 @@ esp_err_t BleModule::set_battery_level(uint8_t level) {
                       "BLE Module must be initialized to set battery level");
 
   ESP_RETURN_ON_FALSE(level <= 100, ESP_ERR_INVALID_ARG, TAG,
-                      "Battery level %d exceeds 100%, ignoring", level);
+                      "Battery level %d exceeds 100%%, ignoring", level);
 
   battery_level_ = level;
 
   auto &battery_service = ble_gatt_server_.battery_service();
   battery_service.set_battery_level(battery_level_);
-  ESP_LOGD(TAG, "Battery level updated to %d%", battery_level_);
+  ESP_LOGD(TAG, "Battery level updated to %d%%", battery_level_);
   return ESP_OK;
 }
 
@@ -115,7 +124,8 @@ void BleModule::setup_callbacks() {
   espp::BleGattServer::Callbacks callbacks;
 
   callbacks.connect_callback = [this](NimBLEConnInfo &conn) {
-    ESP_LOGI(TAG, "Device connected – checking MTU");
+    ESP_LOGI(TAG, "Device connected – resetting ACK state");
+    reset_ack_on_connect();
     if (config_.on_connect) {
       config_.on_connect(conn);
     }
@@ -123,7 +133,9 @@ void BleModule::setup_callbacks() {
 
   callbacks.disconnect_callback = [this](NimBLEConnInfo &conn_info,
                                          espp::BleGattServer::DisconnectReason reason) {
-    ESP_LOGI(TAG, "Device disconnected: %d", reason);
+    ESP_LOGI(TAG, "Device disconnected: %d – disarming ACK", reason);
+    ack_armed_ = false;
+    ack_received_ = false;
     if (config_.on_disconnect) {
       config_.on_disconnect(conn_info, reason);
     }
@@ -136,13 +148,13 @@ void BleModule::setup_callbacks() {
     }
   };
 
-  callbacks.get_passkey_callback = [this]() {
+  callbacks.get_passkey_callback = []() {
     ESP_LOGI(TAG, "Getting passkey");
     return NimBLEDevice::getSecurityPasskey();
   };
 
-  callbacks.confirm_passkey_callback = [this](const NimBLEConnInfo &conn_info, uint32_t passkey) {
-    ESP_LOGI(TAG, "Confirming passkey: %d", passkey);
+  callbacks.confirm_passkey_callback = [](const NimBLEConnInfo &conn_info, uint32_t passkey) {
+    ESP_LOGI(TAG, "Confirming passkey: %lu", (unsigned long)passkey);
     NimBLEDevice::injectConfirmPasskey(conn_info, passkey == NimBLEDevice::getSecurityPasskey());
   };
 
@@ -224,7 +236,7 @@ esp_err_t BleModule::init_quat_service() {
 
   ESP_LOGI(TAG, "Service UUID: %s, Quat Char UUID: %s, ACK Char UUID: %s",
            QUAT_SVC_UUID.toString().c_str(), QUAT_CHAR_UUID.toString().c_str(),
-           QUAT_CHAR_UUID.toString().c_str());
+           QUAT_ACK_UUID.toString().c_str());
 
   ESP_LOGI(TAG, "Creating service...");
 
@@ -243,7 +255,7 @@ esp_err_t BleModule::init_quat_service() {
 
   ESP_LOGI(TAG, "Quaternion characteristic created");
 
-  ESP_LOGI(TAG, "Creating CCCD desccriptor");
+  ESP_LOGI(TAG, "Creating CCCD descriptor");
 
   NimBLEDescriptor *cccd = quat_char_->createDescriptor(
       NimBLEUUID((uint16_t)0x2902), NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
@@ -284,7 +296,7 @@ esp_err_t BleModule::init_quat_service() {
   ESP_RETURN_ON_FALSE(ackUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
                       "Failed to create ack user descriptor, returned nullptr");
 
-  ackUserDescriptor->setValue("Acknowledgement (WRITE any value)");
+  ackUserDescriptor->setValue("Acknowledgement (WRITE Ack struct with frame_seq)");
   ESP_LOGI(TAG, "ACK User Description set");
 
   ESP_LOGI(TAG, "Starting service");
@@ -295,7 +307,7 @@ esp_err_t BleModule::init_quat_service() {
 }
 
 /* ----------------------------------------------------------------
- *  Send a quaternion notification – payload must be exactly 24 bytes
+ *  Send a quaternion notification
  * ---------------------------------------------------------------- */
 esp_err_t BleModule::notify_quaternion(const uint8_t *payload, size_t len) {
   ESP_RETURN_ON_FALSE(quat_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
@@ -306,27 +318,44 @@ esp_err_t BleModule::notify_quaternion(const uint8_t *payload, size_t len) {
   quat_char_->setValue(payload, len);
   ESP_RETURN_ON_FALSE(quat_char_->notify(), ESP_ERR_INVALID_STATE, TAG, "Failed to notify");
 
+  ESP_LOGD(TAG, "notify_quaternion: sent %u bytes", (unsigned)len);
+
   return ESP_OK;
 }
 
 bool BleModule::quat_notify_enabled() const {
-  return (quat_char_ != nullptr) && quat_notifications_enabled_;
+  return (quat_char_ != nullptr) && quat_notifications_enabled_.load();
+}
+
+/* ----------------------------------------------------------------
+ *  ACK helpers
+ * ---------------------------------------------------------------- */
+
+void BleModule::arm_ack(uint16_t seq) {
+  // Clear any stale ACK from before this send, then record what we expect,
+  // then arm the wait.  Order matters: write ack_received_ = false BEFORE
+  // setting ack_armed_ = true, so the callback cannot see armed=true while
+  // ack_received_ is still a leftover true from the previous round.
+  ack_received_.store(false, std::memory_order_relaxed);
+  ack_expected_seq_.store(seq, std::memory_order_relaxed);
+  ack_armed_.store(true, std::memory_order_release);
+  ESP_LOGD(TAG, "arm_ack: waiting for ACK seq %u", (unsigned)seq);
 }
 
 bool BleModule::is_ack_received() const {
-  return ack_received_ || first_send_pending_;
-}
-
-void BleModule::reset_ack() {
-  first_send_pending_ = false;
-  ack_received_ = false;
+  return ack_received_.load(std::memory_order_acquire);
 }
 
 void BleModule::reset_ack_on_connect() {
-  first_send_pending_ = true;
+  ack_armed_ = false;
   ack_received_ = false;
+  ack_expected_seq_ = 0;
+  ESP_LOGD(TAG, "reset_ack_on_connect: ACK state cleared");
 }
 
+/* ----------------------------------------------------------------
+ *  CCCD callback – client enabled/disabled notifications
+ * ---------------------------------------------------------------- */
 void BleModule::QuatCCCDCallbacks::onWrite(NimBLEDescriptor *pDescriptor,
                                            NimBLEConnInfo &connInfo) {
   ESP_RETURN_VOID_ON_FALSE(pDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
@@ -340,32 +369,73 @@ void BleModule::QuatCCCDCallbacks::onWrite(NimBLEDescriptor *pDescriptor,
   ESP_RETURN_VOID_ON_FALSE(parent_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
                            "Failed CCCD onWrite due to null parent");
 
-  parent_->quat_notifications_enabled_ = enabled;
-  if (enabled) {
-    ESP_LOGI(TAG, "Notification enabled");
-    parent_->first_send_pending_ = true;
-    parent_->ack_received_ = false;
+  parent_->quat_notifications_enabled_.store(enabled, std::memory_order_relaxed);
+
+  if (!enabled) {
+    // Disabling notifications: disarm so uploadTask does not stay stuck
+    parent_->ack_armed_.store(false, std::memory_order_relaxed);
+    parent_->ack_received_.store(false, std::memory_order_relaxed);
+    ESP_LOGI(TAG, "CCCD: notifications disabled – ACK state cleared");
+  } else {
+    ESP_LOGI(TAG, "CCCD: notifications enabled");
   }
 }
 
+/* ----------------------------------------------------------------
+ *  ACK write callback – client acknowledges a received frame
+ * ---------------------------------------------------------------- */
 void BleModule::AckCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic,
                                           NimBLEConnInfo &connInfo) {
   ESP_RETURN_VOID_ON_FALSE(pCharacteristic != nullptr, ESP_ERR_INVALID_STATE, TAG,
-                           "Failed ACK onWrite due to null descriptor");
-
-  std::string value = pCharacteristic->getValue();
-  ESP_LOGI(TAG, "ACK Received: %d bytes", value.length());
+                           "Failed ACK onWrite due to null characteristic");
 
   ESP_RETURN_VOID_ON_FALSE(parent_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
                            "Failed ACK onWrite due to null parent");
 
-  if (parent_->ack_received_) {
-    ESP_LOGW(TAG, "Duplicate ACK received");
+  // Parse payload – must be exactly sizeof(Ack) = 2 bytes
+  std::string raw = pCharacteristic->getValue();
+  ESP_LOGD(TAG, "ACK onWrite: received %u bytes", (unsigned)raw.size());
+
+  if (raw.size() < sizeof(Ack)) {
+    ESP_LOGW(TAG, "ACK onWrite: payload too short (%u bytes, expected %u) – ignoring",
+             (unsigned)raw.size(), (unsigned)sizeof(Ack));
     return;
   }
 
-  parent_->ack_received_ = true;
-  ESP_LOGI(TAG, "ACK processed succesfully");
+  Ack ack;
+  memcpy(&ack, raw.data(), sizeof(Ack));
+
+  uint16_t expected = parent_->ack_expected_seq_.load(std::memory_order_relaxed);
+  bool armed = parent_->ack_armed_.load(std::memory_order_acquire);
+
+  ESP_LOGI(TAG, "ACK onWrite: received seq=%u  expected=%u  armed=%d",
+           (unsigned)ack.frame_seq, (unsigned)expected, (int)armed);
+
+  if (!armed) {
+    // No send is in flight – this is a late/spurious ACK from a previous transaction
+    ESP_LOGW(TAG, "ACK onWrite: received ACK seq=%u but not armed (stale ACK) – ignoring",
+             (unsigned)ack.frame_seq);
+    return;
+  }
+
+  if (ack.frame_seq != expected) {
+    // Wrong sequence – client is acknowledging an old frame
+    ESP_LOGW(TAG, "ACK onWrite: seq mismatch – got %u, expected %u – ignoring",
+             (unsigned)ack.frame_seq, (unsigned)expected);
+    return;
+  }
+
+  if (parent_->ack_received_.load(std::memory_order_relaxed)) {
+    // Already processed a valid ACK for this frame
+    ESP_LOGW(TAG, "ACK onWrite: duplicate valid ACK for seq=%u – ignoring",
+             (unsigned)ack.frame_seq);
+    return;
+  }
+
+  // Valid, in-sequence, first ACK for this frame
+  parent_->ack_armed_.store(false, std::memory_order_relaxed);
+  parent_->ack_received_.store(true, std::memory_order_release);
+  ESP_LOGI(TAG, "ACK onWrite: ACK seq=%u accepted", (unsigned)ack.frame_seq);
 }
 
 } // namespace BLE

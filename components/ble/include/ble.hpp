@@ -6,6 +6,7 @@
 
 #include "NimBLEDevice.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -101,6 +102,13 @@ public:
   esp_err_t init();
 
   /**
+   * @brief Apply a new configuration before init() is called.
+   *        Must not be called after init().
+   * @param config New configuration to apply
+   */
+  void reconfigure(const Config &config);
+
+  /**
    * @brief Start advertising
    * @return true if successful, false otherwise
    */
@@ -165,19 +173,27 @@ public:
   /** Register the custom Quaternion service/characteristic. Call once before advertising. */
   esp_err_t init_quat_service();
 
-  /** Send a quaternion notification (payload must be 24 bytes). */
+  /** Send a quaternion notification. */
   esp_err_t notify_quaternion(const uint8_t *payload, size_t len);
 
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
 
-  /** Check if ACK was received (or if first send is pending) */
+  /**
+   * @brief Arm the ACK wait for the frame that was just sent.
+   *        Call this AFTER notify_quaternion so the ACK callback cannot fire
+   *        before ack_armed_ is set.
+   * @param seq The frame_seq just sent - the incoming Ack.frame_seq must match.
+   */
+  void arm_ack(uint16_t seq);
+
+  /**
+   * @brief Returns true once a valid ACK matching the armed seq has been received,
+   *        or if arm_ack() has not yet been called (idle / not armed).
+   */
   bool is_ack_received() const;
 
-  /** Clear ACK flag after sending (call after notify_quaternion) */
-  void reset_ack();
-
-  /** Reset state on new connection */
+  /** Reset ACK state on new connection */
   void reset_ack_on_connect();
 
   /** Simple getters **/
@@ -208,9 +224,14 @@ private:
   QuatCCCDCallbacks quat_cccd_cb_{this};
   AckCharCallbacks quat_ack_cb_{this};
 
-  bool quat_notifications_enabled_ = false;
-  bool ack_received_ = false;
-  bool first_send_pending_ = false;
+  std::atomic<bool> quat_notifications_enabled_{false};
+
+  // ack_armed_: set by arm_ack() after a notify is sent, cleared once a valid ACK arrives.
+  std::atomic<bool> ack_armed_{false};
+  // ack_received_: set to true by AckCharCallbacks when a valid seq-matched ACK arrives.
+  std::atomic<bool> ack_received_{false};
+  // The frame_seq we expect the client to echo in its ACK write.
+  std::atomic<uint16_t> ack_expected_seq_{0};
 
   Config config_;
   espp::BleGattServer ble_gatt_server_;
