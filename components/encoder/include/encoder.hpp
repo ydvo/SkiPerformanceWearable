@@ -9,7 +9,6 @@
 #include <cstdint>
 
 #include "GPIO.hpp"
-#include "driver/gpio.h"
 #include "esp_attr.h"
 #include "esp_err.h"
 
