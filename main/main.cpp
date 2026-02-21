@@ -212,7 +212,7 @@ void imuTask(void *arg) {
       sample.timestamp_us = esp_timer_get_time();
 
       // save imu data
-      if (imu.update(IMU_FREQ * 1e-6)) {
+      if (imu.update(1.0f / IMU_FREQ)) {
         sample.quat = imu.get_orientation();
       } else {
         sample.quat = {1, 0, 0, 0}; // imu not ready, return identity quat
