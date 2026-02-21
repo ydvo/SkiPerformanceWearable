@@ -112,12 +112,15 @@ public:
    * Program the sequencer with up to 8 effects and fire go().
    * The array must be terminated with EFFECTS::END or have exactly `count` entries.
    * At most 8 slots are used; extra entries are ignored.
+   * All 8 sequence registers + GO are written in a single I2C transaction.
    *
    * Example:
    *   uint8_t seq[] = { EFFECTS::SINGLE_CLICK, EFFECTS::END };
    *   haptic.play(seq, 2);
+   *
+   * @return true on success, false if the I2C write failed
    */
-  void play(const uint8_t *effects, uint8_t count);
+  bool play(const uint8_t *effects, uint8_t count);
 
   static constexpr uint8_t DEFAULT_ADDRESS{0x5A};
   static constexpr uint8_t EXPECTED_STATUS{0xE0};
@@ -132,7 +135,7 @@ public:
   void select_motor(MotorType motor);
   void select_library(Library lib);
   void set_waveform(uint8_t sequencer, uint8_t waveform);
-  void go();
+  bool go();
   void stop();
 
   void set_realtime_value(uint8_t value);
@@ -169,7 +172,7 @@ private:
   espp::I2c &i2c_;
   uint8_t address_;
 
-  void write_register(uint8_t reg, uint8_t value);
+  bool write_register(uint8_t reg, uint8_t value);
   uint8_t read_register(uint8_t reg);
 };
 
