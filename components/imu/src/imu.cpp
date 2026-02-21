@@ -1,6 +1,7 @@
 #include "imu.hpp"
 #include "esp_log.h"
 #include "fast_math.hpp"
+#include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 #include <system_error>
 
@@ -40,6 +41,7 @@ bool Imu::init() {
     ESP_LOGE(TAG, "Error initializing: %s", ec.message().c_str());
     return false;
   }
+  vTaskDelay(pdMS_TO_TICKS(INIT_DELAY));
 
   // set and enable low pass filters
   if (!imu_.set_accelerometer_dlpf(ACCEL_LPF_BANDWIDTH, ec)) {

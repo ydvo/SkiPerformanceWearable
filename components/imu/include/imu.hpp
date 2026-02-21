@@ -22,6 +22,9 @@ public:
   static constexpr uint8_t ICM20948_ADDRESS{0x69};
   static constexpr int ICM20948_I2C_HZ{400000};
 
+  // delay after startup before configuration can start
+  static constexpr uint8_t INIT_DELAY{100};
+
   // Sensor Ranges
   static constexpr espp::icm20948::AccelerometerRange ACCELEROMETER_RANGE =
       espp::icm20948::AccelerometerRange::RANGE_2G;

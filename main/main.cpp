@@ -712,14 +712,14 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(100)); // give i2c time to startup
+  vTaskDelay(pdMS_TO_TICKS(500)); // give i2c time to startup
 
   // init imu
   if (imu.init()) {
     logger.info("Imu initialized");
   } else {
     logger.error("Failed to initialize imu");
-    // return ESP_ERR_INVALID_STATE; // sometimes errors but works fine
+    return ESP_ERR_INVALID_STATE; // sometimes errors but works fine
   }
 
   // check if battery is connected
