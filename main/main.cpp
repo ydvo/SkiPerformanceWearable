@@ -58,12 +58,12 @@ espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
 
 // I2C
 espp::I2c i2c({
-  .port = i2c_port,
-  .sda_io_num = i2c_sda,
-  .scl_io_num = i2c_scl,
-  .sda_pullup_en = GPIO_PULLUP_ENABLE,
-  .scl_pullup_en = GPIO_PULLUP_ENABLE,
-  .auto_init = false,
+    .port = i2c_port,
+    .sda_io_num = i2c_sda,
+    .scl_io_num = i2c_scl,
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
+    .scl_pullup_en = GPIO_PULLUP_ENABLE,
+    .auto_init = false,
 });
 
 // SPI Flash Device
@@ -224,7 +224,7 @@ void imuTask(void *arg) {
       }
 
       // wait until imu frequency (100Hz)
-      xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(1000 / IMU_FREQ)); 
+      xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(1000 / IMU_FREQ));
     }
   }
 }
@@ -238,17 +238,17 @@ void flashWriterTask(void *arg) {
     xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
                         portMAX_DELAY);
 
-    // TODO: Is there a need to reinitialize flash log? 
+    // TODO: Is there a need to reinitialize flash log?
 
     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
       // Block waiting for first sample
       if (xQueueReceive(imuQueue, &sample, portMAX_DELAY) == pdTRUE) {
         // Write batch to flash
         STORAGE::Quaternion q = {
-          .w = sample.quat.w,
-          .x = sample.quat.x,
-          .y = sample.quat.y,
-          .z = sample.quat.z,
+            .w = sample.quat.w,
+            .x = sample.quat.x,
+            .y = sample.quat.y,
+            .z = sample.quat.z,
         };
 
         if (flash_log.append(q, sample.timestamp_us) != ESP_OK) {
@@ -261,10 +261,10 @@ void flashWriterTask(void *arg) {
 
 enum class UploadState : uint8_t {
   BUFFER_FLASH_FRAME,
-  INITIALIZE_BLE_FRAME, 
-  NOTIFY_BLE, 
-  WAIT_FOR_ACK, 
-  RECEIVED_ACK, 
+  INITIALIZE_BLE_FRAME,
+  NOTIFY_BLE,
+  WAIT_FOR_ACK,
+  RECEIVED_ACK,
   TIMEOUT_ACK,
 };
 
@@ -280,45 +280,39 @@ void uploadTask(void *arg) {
     UploadState upload_state = UploadState::BUFFER_FLASH_FRAME;
 
     STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame;
-    BLE::Frame ble_frame {
-      .header = {
-        .frame_seq = 0,
-        .sample_count = 0, 
-        .payload_len = 0,
-        .flags = 0
-      }, 
-      .payload = {}
-    }; 
+    BLE::Frame ble_frame{
+        .header = {.frame_seq = 0, .sample_count = 0, .payload_len = 0, .flags = 0}, .payload = {}};
 
-    size_t samples_sent_from_frame {0};
-    int64_t ble_ack_start; 
-    int64_t ack_wait_us; 
+    size_t samples_sent_from_frame{0};
+    int64_t ble_ack_start;
+    int64_t ack_wait_us;
 
     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
       switch (upload_state) {
       case UploadState::BUFFER_FLASH_FRAME: {
-        size_t frames_read {0}; 
+        size_t frames_read{0};
 
         logger.debug("Upload: reading frame from flash");
         if (flash_log.read(&flash_frame, 1, &frames_read) == ESP_OK && frames_read > 0) {
-          samples_sent_from_frame = 0; 
+          samples_sent_from_frame = 0;
           logger.info("Upload: loaded flash frame seq={} ({} samples per frame)",
                       (uint32_t)flash_frame.seq, (uint32_t)STORAGE::SAMPLES_PER_FRAME);
-          
-          upload_state = UploadState::INITIALIZE_BLE_FRAME; 
+
+          upload_state = UploadState::INITIALIZE_BLE_FRAME;
         } else {
           logger.debug("Upload: no flash data, retrying in {}ms", UPLOAD_RETRY_DELAY_MS);
-          vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS)); 
+          vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
         }
 
         break;
-      } 
+      }
       case UploadState::INITIALIZE_BLE_FRAME: {
         size_t samples_remaining = STORAGE::SAMPLES_PER_FRAME - samples_sent_from_frame;
-        size_t samples_this_send =
-            (samples_remaining > BLE::SAMPLES_PER_FRAME) ? BLE::SAMPLES_PER_FRAME : samples_remaining;
+        size_t samples_this_send = (samples_remaining > BLE::SAMPLES_PER_FRAME)
+                                       ? BLE::SAMPLES_PER_FRAME
+                                       : samples_remaining;
 
-        ble_frame.header.frame_seq++; 
+        ble_frame.header.frame_seq++;
         ble_frame.header.sample_count = static_cast<uint16_t>(samples_this_send);
         ble_frame.header.payload_len =
             static_cast<uint16_t>(samples_this_send * sizeof(BLE::FrameSample));
@@ -331,16 +325,16 @@ void uploadTask(void *arg) {
           ble_frame.payload[i].y = flash_frame.payload[src_idx].data.y;
           ble_frame.payload[i].z = flash_frame.payload[src_idx].data.z;
         }
-        
-        upload_state = UploadState::NOTIFY_BLE; 
-        break; 
+
+        upload_state = UploadState::NOTIFY_BLE;
+        break;
       }
       case UploadState::NOTIFY_BLE: {
         // Wait for BLE connection
         if (!ble.is_connected()) {
           logger.debug("Upload: BLE not connected, retrying in {}ms", UPLOAD_RETRY_DELAY_MS);
           vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
-          break; 
+          break;
         }
 
         size_t payload_bytes = sizeof(BLE::FrameHeader) + ble_frame.header.payload_len;
@@ -354,33 +348,33 @@ void uploadTask(void *arg) {
             ble.notify_quaternion(reinterpret_cast<const uint8_t *>(&ble_frame), payload_bytes);
 
         if (notify_err != ESP_OK) {
-          logger.warn("Upload: notify_quaternion failed (err={}), retrying in {}ms", (int)notify_err,
-                      UPLOAD_RETRY_DELAY_MS);
+          logger.warn("Upload: notify_quaternion failed (err={}), retrying in {}ms",
+                      (int)notify_err, UPLOAD_RETRY_DELAY_MS);
           vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
         } else {
           // Arm the ACK wait
           ble.arm_ack(ble_frame.header.frame_seq);
 
           logger.debug("Upload: notification sent, armed ACK wait for seq={}",
-                      (uint16_t)ble_frame.header.frame_seq);
+                       (uint16_t)ble_frame.header.frame_seq);
 
-          upload_state = UploadState::WAIT_FOR_ACK; 
-          ble_ack_start = esp_timer_get_time(); 
+          upload_state = UploadState::WAIT_FOR_ACK;
+          ble_ack_start = esp_timer_get_time();
         }
 
-        break; 
+        break;
       }
       case UploadState::WAIT_FOR_ACK: {
-        ack_wait_us = esp_timer_get_time() - ble_ack_start; 
+        ack_wait_us = esp_timer_get_time() - ble_ack_start;
 
         if (ble.is_ack_received()) {
-          upload_state = UploadState::RECEIVED_ACK; 
-          break; 
+          upload_state = UploadState::RECEIVED_ACK;
+          break;
         }
-        
+
         if (ack_wait_us > UPLOAD_ACK_TIMEOUT_US) {
-          upload_state = UploadState::TIMEOUT_ACK; 
-          break; 
+          upload_state = UploadState::TIMEOUT_ACK;
+          break;
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -388,14 +382,14 @@ void uploadTask(void *arg) {
       }
       case UploadState::RECEIVED_ACK: {
         logger.info("Upload: ACK received for seq={} after {:.1f}ms",
-                  (uint16_t)ble_frame.header.frame_seq, (float)ack_wait_us / 1000.0f);
+                    (uint16_t)ble_frame.header.frame_seq, (float)ack_wait_us / 1000.0f);
 
         // Advance send position
         samples_sent_from_frame += ble_frame.header.sample_count;
 
         logger.debug("Upload: frame seq={} progress {}/{} samples",
-                    (uint16_t)ble_frame.header.frame_seq, (uint32_t)samples_sent_from_frame,
-                    (uint32_t)STORAGE::SAMPLES_PER_FRAME);
+                     (uint16_t)ble_frame.header.frame_seq, (uint32_t)samples_sent_from_frame,
+                     (uint32_t)STORAGE::SAMPLES_PER_FRAME);
 
         if (samples_sent_from_frame >= STORAGE::SAMPLES_PER_FRAME) {
           total_frames_sent++;
@@ -404,22 +398,22 @@ void uploadTask(void *arg) {
 
           upload_state = UploadState::BUFFER_FLASH_FRAME;
         } else {
-          upload_state = UploadState::INITIALIZE_BLE_FRAME; 
+          upload_state = UploadState::INITIALIZE_BLE_FRAME;
         }
 
-        break; 
+        break;
       }
       case UploadState::TIMEOUT_ACK: {
         total_ack_timeouts++;
         logger.warn("Upload: ACK timeout after {:.2f}s for seq={} (total timeouts={})",
                     (float)ack_wait_us / 1e6f, (uint16_t)ble_frame.header.frame_seq,
                     total_ack_timeouts);
-        upload_state = UploadState::NOTIFY_BLE; 
-        break; 
+        upload_state = UploadState::NOTIFY_BLE;
+        break;
       }
-      default: 
-        logger.warn("Unexpected upload state. "); 
-        break; 
+      default:
+        logger.warn("Unexpected upload state. ");
+        break;
       }
     }
   }
@@ -431,32 +425,33 @@ using E = HAPTICS::DRV2605L::EFFECTS;
 
 struct HapticSequence {
   HapticEvent event;
-  size_t count; 
+  size_t count;
   uint8_t effects[8]; // terminated by EFFECTS::END (0x00)
 };
 
 static const HapticSequence haptic_sequences[] = {
-  // BOOT: soft double-click to confirm power-on
-  {HapticEvent::BOOT, 1, {E::DOUBLE_CLICK, E::END}},
+    // BOOT: soft double-click to confirm power-on
+    {HapticEvent::BOOT, 1, {E::DOUBLE_CLICK, E::END}},
 
-  // BLE_CONNECT: rising two-pulse -- distinct from boot
-  {HapticEvent::BLE_CONNECT, 2, {E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK_2, E::END}},
+    // BLE_CONNECT: rising two-pulse -- distinct from boot
+    {HapticEvent::BLE_CONNECT, 2, {E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK_2, E::END}},
 
-  // BLE_DISCONNECT: single dull bump to signal loss
-  {HapticEvent::BLE_DISCONNECT, 1, {E::SOFT_BUMP, E::END}},
+    // BLE_DISCONNECT: single dull bump to signal loss
+    {HapticEvent::BLE_DISCONNECT, 1, {E::SOFT_BUMP, E::END}},
 
-  // RUN_START: sharp strong click -- clear "go" signal
-  {HapticEvent::RUN_START, 1, {E::SHARP_CLICK, E::END}},
+    // RUN_START: sharp strong click -- clear "go" signal
+    {HapticEvent::RUN_START, 1, {E::SHARP_CLICK, E::END}},
 
-  // RUN_STOP: two soft clicks -- distinct from start
-  {HapticEvent::RUN_STOP, 2, {E::SOFT_BUMP, E::SOFT_BUMP_2, E::END}},
+    // RUN_STOP: two soft clicks -- distinct from start
+    {HapticEvent::RUN_STOP, 2, {E::SOFT_BUMP, E::SOFT_BUMP_2, E::END}},
 
-  // LOW_BATTERY: three short buzzes as a warning pattern
-  {HapticEvent::LOW_BATTERY, 3,
-    {E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK, E::END}},
+    // LOW_BATTERY: three short buzzes as a warning pattern
+    {HapticEvent::LOW_BATTERY,
+     3,
+     {E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK, E::SHORT_DOUBLE_CLICK, E::END}},
 
-  // ERROR: long buzz
-  {HapticEvent::ERROR, 1, {E::LONG_BUZZ, E::END}},
+    // ERROR: long buzz
+    {HapticEvent::ERROR, 1, {E::LONG_BUZZ, E::END}},
 };
 } // namespace
 
@@ -485,8 +480,11 @@ void hapticTask(void *arg) {
     // Count entries up to (but not including) the terminator
     uint8_t count = seq->count;
     if (count > 0) {
-      haptic.play(seq->effects, count);
-      logger.debug("hapticTask: played event {}", static_cast<uint8_t>(event));
+      if (haptic.play(seq->effects, count)) {
+        logger.debug("hapticTask: played event {}", static_cast<uint8_t>(event));
+      } else {
+        logger.warn("hapticTask: I2C write failed for event {}", static_cast<uint8_t>(event));
+      }
     }
   }
 }
@@ -502,6 +500,9 @@ void batteryTask(void *arg) {
         logger.debug("Battery: {}%", level);
       }
     }
+    // check stack usage
+    // UBaseType_t watermark = uxTaskGetStackHighWaterMark(nullptr);
+    // logger.info("BatteryTask watermark: {}", watermark);
     vTaskDelay(pdMS_TO_TICKS(BATTERY_UPDATE_INTERVAL_MS));
   }
 }
@@ -656,8 +657,6 @@ static void IRAM_ATTR boot_button_isr(void *arg) {
   xQueueSendFromISR(eventQueue, &e, 0);
 }
 
-// TODO: interpret quadrature input
-
 // ---------------------------------------------------------------------
 //  BLE
 // ---------------------------------------------------------------------
@@ -810,6 +809,10 @@ esp_err_t initSystem() {
 // ---------------------------------------------------------------------
 
 extern "C" void app_main() {
+  // set log level for debug
+  esp_log_level_set("FLASH_LOG", ESP_LOG_WARN);
+  esp_log_level_set("BLE", ESP_LOG_WARN);
+
   // Setup
   if (initSystem() != ESP_OK) {
     logger.error("Failed initializing a system.");
@@ -824,7 +827,7 @@ extern "C" void app_main() {
 
   // Create Tasks
   // Create a task that will write samples to the flash
-  xTaskCreate(flashWriterTask, "flash_writer", 4096, NULL, 3, &flash_writer_task_handle);
+  xTaskCreate(flashWriterTask, "flash_writer", 4096, NULL, 6, &flash_writer_task_handle);
 
   // Create a task that will capture sensor data
   xTaskCreate(imuTask, "imu_task", 4096, NULL, 8, &imu_task_handle);
@@ -836,14 +839,11 @@ extern "C" void app_main() {
   xTaskCreate(uploadTask, "upload", 4096, NULL, 4, &upload_task_handle);
 
   // Create a task that periodically updates the BLE battery level
-  xTaskCreate(batteryTask, "battery", 2048, NULL, 2, &battery_task_handle);
+  xTaskCreate(batteryTask, "battery", 3072, NULL, 2, &battery_task_handle);
 
   // Create a task that plays haptic events from the queue
   xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
 
   // Indicate boot complete
   haptic_notify(HapticEvent::BOOT);
-
-  // to clear logs for debug
-  esp_log_level_set("FLASH_LOG", ESP_LOG_WARN);
 }
