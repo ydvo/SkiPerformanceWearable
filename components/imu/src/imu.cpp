@@ -13,7 +13,12 @@ static const char *TAG{"IMU"};
 Imu::Value calibrate_mag(espp::icm20948::Value raw);
 
 // constructor
-Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {}
+Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {
+  // Set the combined write_then_read callback on the base peripheral to reduce bus operations
+  imu_.set_write_then_read(std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1,
+                                     std::placeholders::_2, std::placeholders::_3,
+                                     std::placeholders::_4, std::placeholders::_5));
+}
 
 Imu::Imu(ICM::Config cfg) : imu_(cfg), filter_(MADGWICK_BETA), enable_magnetometer_{1} {}
 
