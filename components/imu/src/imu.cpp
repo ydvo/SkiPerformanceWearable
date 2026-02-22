@@ -125,6 +125,12 @@ bool Imu::update(float dt) {
   return true;
 }
 
+Imu::Euler Imu::get_euler() const {
+  Euler e;
+  filter_.get_euler(e.pitch, e.roll, e.yaw);
+  return e;
+}
+
 Imu::Value Imu::apply_mag_cal(espp::icm20948::Value raw) {
   double m_raw[3] = {raw.x, raw.y, raw.z};
 

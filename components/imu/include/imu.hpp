@@ -59,6 +59,12 @@ public:
     float z{};
   };
 
+  struct Euler {
+    float pitch{}; // degrees, rotation about X
+    float roll{};  // degrees, rotation about Y
+    float yaw{};   // degrees, rotation about Z
+  };
+
   struct Raw {
     espp::icm20948::Value accel{};
     espp::icm20948::Value gyro{};
@@ -87,6 +93,9 @@ public:
   Quaternion get_orientation() const {
     return orientation_;
   }
+
+  // Get euler angles (degrees) from the Madgwick filter
+  Euler get_euler() const;
 
   // Get raw IMU data
   Raw get_raw() const {
