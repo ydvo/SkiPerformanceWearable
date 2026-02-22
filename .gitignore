@@ -1,6 +1,7 @@
 build/
 managed_components/
 test_scripts/
+!test_scripts/*.py
 
 *.o
 *.a
