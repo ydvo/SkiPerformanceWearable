@@ -1,0 +1,9 @@
+{
+  "date": "2026-02-10",
+  "offset_hours": 5,
+  "runs": [
+    { "name": "run2", "start": "10:28:32", "end": "10:29:10", "class": "straight" },
+    { "name": "run3", "start": "10:32:37", "end": "10:33:08", "class": "turning" },
+    { "name": "run4", "start": "10:39:38", "end": "10:40:31", "class": "turning" }
+  ]
+}
