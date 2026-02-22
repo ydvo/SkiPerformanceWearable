@@ -5,6 +5,7 @@
 #include "hal/i2c_types.h"
 #include "soc/gpio_num.h"
 
+#include "esp_attr.h"
 #include "esp_err.h"
 
 #include "GPIO.hpp"
@@ -30,7 +31,7 @@ constexpr adc_channel_t fsr_pin{ADC_CHANNEL_4};
 // Encoder pins (quadrature channels A and B)
 constexpr gpio_num_t encoder_pin_a{GPIO_NUM_15};
 constexpr gpio_num_t encoder_pin_b{GPIO_NUM_14};
-constexpr uint32_t encoder_cpr{2400}; // counts per revolution
+constexpr uint32_t encoder_cpr{10000}; // counts per revolution
 
 /* Components */
 
@@ -53,6 +54,18 @@ SENSORS::Imu imu(i2c);
 // Encoder
 SENSORS::Encoder encoder(encoder_pin_a, encoder_pin_b, encoder_cpr);
 
+// Boot button (used to zero encoder)
+Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT,
+                         Common::GPIO::Level::ON, Common::GPIO::PULLUP);
+
+/* boot_button_isr
+ *  - ISR for boot button, zeros the encoder count
+ */
+static void IRAM_ATTR boot_button_isr(void *arg) {
+  auto *enc = static_cast<SENSORS::Encoder *>(arg);
+  enc->reset();
+}
+
 /*
  * initSystem()
  *  - initialization function, runs once before main loop
@@ -69,9 +82,6 @@ void initSystem() {
   // led
   LED::led red_led = LED::led(LED::RED_LED);
 
-  // turn on led
-  red_led.turn_on();
-
   // create i2c instance
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
 
@@ -87,6 +97,16 @@ void initSystem() {
   if (!imu.init()) {
     logger.error("Imu init error");
   }
+
+  // init encoder
+  encoder.init();
+
+  // register boot button interrupt to zero encoder on press
+  boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE,
+                            boot_button_isr, &encoder);
+
+  // turn on led
+  red_led.turn_on();
 }
 
 /*
@@ -94,21 +114,17 @@ void initSystem() {
  *  - runs repeatedly, contains update logic
  */
 void mainLoop(auto dt) {
-  // get imu data
-  if (imu.update(dt)) {
-    SENSORS::Imu::Quaternion quat = imu.get_orientation();
-    // printf("%0.2f %0.2f %0.2f %0.2f", quat.w, quat.x, quat.y, quat.z);
-  }
+  // update imu
+  imu.update(dt);
 
-  // get encoder orientation
-  static int32_t prev_count = encoder.get_count();
+  // get imu euler angles and encoder angle
+  auto euler = imu.get_euler();
+  float enc_angle = encoder.get_angle();
 
-  int32_t count = encoder.get_count();
-  if (count != prev_count) {
-    float angle = encoder.get_angle();
-    ESP_LOGI("ENCODER", "count=%ld  angle=%.2f deg", (long)count, angle);
-    prev_count = count;
-  }
+  // output CSV: DATA,<timestamp_ms>,<encoder_angle>,<pitch>,<roll>,<yaw>
+  uint32_t ts = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  printf("DATA,%lu,%.2f,%.2f,%.2f,%.2f\n",
+         (unsigned long)ts, enc_angle, euler.pitch, euler.roll, euler.yaw);
 }
 
 /* Application Entry Point */
