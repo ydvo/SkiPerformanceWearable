@@ -55,8 +55,8 @@ SENSORS::Imu imu(i2c);
 SENSORS::Encoder encoder(encoder_pin_a, encoder_pin_b, encoder_cpr);
 
 // Boot button (used to zero encoder)
-Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT,
-                         Common::GPIO::Level::ON, Common::GPIO::PULLUP);
+Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
+                         Common::GPIO::PULLUP);
 
 /* boot_button_isr
  *  - ISR for boot button, zeros the encoder count
@@ -102,8 +102,7 @@ void initSystem() {
   encoder.init();
 
   // register boot button interrupt to zero encoder on press
-  boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE,
-                            boot_button_isr, &encoder);
+  boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, &encoder);
 
   // turn on led
   red_led.turn_on();
@@ -123,8 +122,8 @@ void mainLoop(auto dt) {
 
   // output CSV: DATA,<timestamp_ms>,<encoder_angle>,<pitch>,<roll>,<yaw>
   uint32_t ts = xTaskGetTickCount() * portTICK_PERIOD_MS;
-  printf("DATA,%lu,%.2f,%.2f,%.2f,%.2f\n",
-         (unsigned long)ts, enc_angle, euler.pitch, euler.roll, euler.yaw);
+  printf("DATA,%lu,%.2f,%.2f,%.2f,%.2f\n", (unsigned long)ts, enc_angle, euler.pitch, euler.roll,
+         euler.yaw);
 }
 
 /* Application Entry Point */
@@ -144,6 +143,6 @@ extern "C" void app_main() {
 
     mainLoop(dt); // run repeatedly
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
