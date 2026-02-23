@@ -116,12 +116,12 @@ public:
 
   // set hard iron
   void set_mag_hard_iron_bias(double b[3]) {
-    memcpy(b_, b, sizeof(&b));
+    memcpy(b_, b, sizeof(b_));
   }
 
   // set soft iron
   void set_mag_soft_iron_bias(double A[3][3]) {
-    memcpy(A_, A, sizeof(&A));
+    memcpy(A_, A, sizeof(A_));
   }
 
 private:
