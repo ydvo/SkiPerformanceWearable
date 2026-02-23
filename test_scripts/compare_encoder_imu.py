@@ -151,7 +151,23 @@ def estimate_phase_lag(enc, imu, sample_period_s):
 
 def run_offline(df, forced_axis):
     """Generate the multi-panel figure and print stats."""
+    # Convert encoder from [0, 360) to [-180, 180) to match IMU convention
+    df["enc"] = np.where(df["enc"] > 180.0, df["enc"] - 360.0, df["enc"])
+
     axis_name, imu_axis = select_best_axis(df, forced_axis)
+
+    # If the IMU axis is negatively correlated with the encoder the two have
+    # opposite sign conventions for the same physical rotation.  Flip the IMU
+    # axis so that both increase in the same direction.
+    if imu_axis.corr(df["enc"]) < 0:
+        imu_axis = -imu_axis
+
+    # Align IMU axis to encoder reference frame by removing the initial offset.
+    # The magnetometer yaw is relative to magnetic north while the encoder is
+    # manually zeroed, so they differ by a constant heading offset.
+    offset = imu_axis.iloc[0] - df["enc"].iloc[0]
+    imu_axis = imu_axis - offset
+
     error = wrapped_error(imu_axis.values, df["enc"].values)
 
     # stats
@@ -188,12 +204,27 @@ def run_offline(df, forced_axis):
 
     t = df["t"].values
 
-    # panel 1: angle vs time (all axes)
+    # panel 1: angle vs time (all axes, selected axis shown aligned)
     ax1 = axes[0]
     ax1.plot(t, df["enc"].values, "-", color="tab:blue", linewidth=1.5, label="Encoder")
-    ax1.plot(t, df["pitch"].values, "--", color="tab:red", linewidth=1.0, label="Pitch")
-    ax1.plot(t, df["roll"].values, "--", color="tab:green", linewidth=1.0, label="Roll")
-    ax1.plot(t, df["yaw"].values, "--", color="tab:orange", linewidth=1.0, label="Yaw")
+    for axis, color in [
+        ("pitch", "tab:red"),
+        ("roll", "tab:green"),
+        ("yaw", "tab:orange"),
+    ]:
+        if axis == axis_name:
+            ax1.plot(
+                t,
+                imu_axis.values,
+                "--",
+                color=color,
+                linewidth=1.0,
+                label=f"{axis.title()} (aligned)",
+            )
+        else:
+            ax1.plot(
+                t, df[axis].values, "--", color=color, linewidth=1.0, label=axis.title()
+            )
     ax1.set_ylabel("Angle (deg)")
     ax1.set_xlabel("Time (s)")
     ax1.set_title("Angle vs Time")
@@ -289,18 +320,34 @@ def run_live(port, baud, save_path, forced_axis):
     ax.legend(loc="upper right")
 
     t0 = None
+    sign_flip = None  # determined once after enough samples accumulate
 
     def update_plot():
         """Redraw the live plot with current data."""
+        nonlocal sign_flip
+
         if len(rows) < 2:
             return
         t_arr = np.array([r["t"] for r in rows])
         ax.set_xlim(t_arr[0], max(t_arr[-1], 1.0))
 
         enc_arr = np.array([r["enc"] for r in rows])
+        # Convert encoder from [0, 360) to [-180, 180) to match IMU convention
+        enc_arr = np.where(enc_arr > 180.0, enc_arr - 360.0, enc_arr)
         pitch_arr = np.array([r["pitch"] for r in rows])
         roll_arr = np.array([r["roll"] for r in rows])
         yaw_arr = np.array([r["yaw"] for r in rows])
+
+        # Determine sign flip once after 20 samples to detect opposite
+        # rotation conventions between encoder and yaw.
+        if sign_flip is None and len(rows) >= 20:
+            corr = np.corrcoef(enc_arr, yaw_arr)[0, 1]
+            sign_flip = -1.0 if corr < 0 else 1.0
+
+        # Apply sign flip and offset correction so yaw overlays encoder
+        if sign_flip is not None:
+            yaw_arr = sign_flip * yaw_arr
+            yaw_arr = yaw_arr - (yaw_arr[0] - enc_arr[0])
 
         line_enc.set_data(t_arr, enc_arr)
         line_pitch.set_data(t_arr, pitch_arr)
