@@ -59,6 +59,12 @@ public:
     float z{};
   };
 
+  struct Euler {
+    float pitch{}; // degrees, rotation about X
+    float roll{};  // degrees, rotation about Y
+    float yaw{};   // degrees, rotation about Z
+  };
+
   struct Raw {
     espp::icm20948::Value accel{};
     espp::icm20948::Value gyro{};
@@ -88,6 +94,9 @@ public:
     return orientation_;
   }
 
+  // Get euler angles (degrees) from the Madgwick filter
+  Euler get_euler() const;
+
   // Get raw IMU data
   Raw get_raw() const {
     return raw_;
@@ -107,12 +116,12 @@ public:
 
   // set hard iron
   void set_mag_hard_iron_bias(double b[3]) {
-    memcpy(b_, b, sizeof(&b));
+    memcpy(b_, b, sizeof(b_));
   }
 
   // set soft iron
   void set_mag_soft_iron_bias(double A[3][3]) {
-    memcpy(A_, A, sizeof(&A));
+    memcpy(A_, A, sizeof(A_));
   }
 
 private:
