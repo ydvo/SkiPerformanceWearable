@@ -6,7 +6,6 @@
 #include "imu.hpp"
 
 #include "driver/spi_common.h"
-#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_timer.h"
@@ -94,12 +93,26 @@ Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPI
 // Constants
 // ---------------------------------------------------------------------
 
-// button debounce
-static constexpr uint32_t BOOT_BUTTON_DEBOUNCE_MS{200};
+// button polling and long-press detection
+static constexpr uint32_t BUTTON_POLL_MS{20};
+static constexpr uint32_t BUTTON_DEBOUNCE_MS{50};
+static constexpr uint32_t LONG_PRESS_MS{3000};
 
 // force sensor calibration value defaults
 static constexpr float FSR_LOW{0.00f};
 static constexpr float FSR_HIGH{2893.5f};
+
+// fsr task polling interval
+static constexpr uint32_t FSR_POLL_INTERVAL_MS{50};
+
+// rtp haptic intensity when threshold exceeded (0-255)
+static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{255};
+
+// calibration phase delay (time for user to prepare)
+static constexpr uint32_t CAL_PHASE_DELAY_MS{3000};
+
+// threshold as percentage of calibrated range
+static constexpr float FSR_THRESHOLD_PERCENT{0.7f};
 
 // queue size for imu samples
 static constexpr uint8_t IMU_QUEUE_SIZE{64};
@@ -134,6 +147,9 @@ enum class HapticEvent : uint8_t {
   RUN_STOP,       // recording stopped
   LOW_BATTERY,    // battery below threshold
   ERROR,          // unrecoverable error
+  CAL_START,      // calibration started (release pressure)
+  CAL_PHASE_TWO,  // apply full pressure now
+  CAL_COMPLETE,   // calibration finished
 };
 
 // ---------------------------------------------------------------------
@@ -146,6 +162,7 @@ enum class SystemState : EventBits_t {
   READY = BIT2,
   RUNNING = BIT3,
   ERROR = BIT4,
+  CALIBRATING = BIT5,
 };
 
 // state var
@@ -156,6 +173,8 @@ enum class Event : uint8_t {
   BLE_CONNECTED,
   BLE_DISCONNECTED,
   TOGGLE_RUN,
+  START_CALIBRATION,
+  CALIBRATION_DONE,
 };
 
 // statically allocated event queue
@@ -174,6 +193,9 @@ static TaskHandle_t control_task_handle = nullptr;
 static TaskHandle_t upload_task_handle = nullptr;
 static TaskHandle_t battery_task_handle = nullptr;
 static TaskHandle_t haptic_task_handle = nullptr;
+static TaskHandle_t fsr_task_handle = nullptr;
+static TaskHandle_t button_task_handle = nullptr;
+static TaskHandle_t calibration_task_handle = nullptr;
 
 // queue for imu data
 static QueueHandle_t imuQueue = nullptr;
@@ -452,6 +474,15 @@ static const HapticSequence haptic_sequences[] = {
 
     // ERROR: long buzz
     {HapticEvent::ERROR, 1, {E::LONG_BUZZ, E::END}},
+
+    // CAL_START: ramp up to signal calibration started (release pressure)
+    {HapticEvent::CAL_START, 1, {E::RAMP_UP, E::END}},
+
+    // CAL_PHASE_TWO: double click to signal "apply pressure now"
+    {HapticEvent::CAL_PHASE_TWO, 2, {E::DOUBLE_CLICK, E::DOUBLE_CLICK, E::END}},
+
+    // CAL_COMPLETE: ramp down to signal calibration finished
+    {HapticEvent::CAL_COMPLETE, 1, {E::RAMP_DOWN, E::END}},
 };
 } // namespace
 
@@ -486,6 +517,124 @@ void hapticTask(void *arg) {
         logger.warn("hapticTask: I2C write failed for event {}", static_cast<uint8_t>(event));
       }
     }
+  }
+}
+
+// Monitor FSR pressure and drive haptic motor in realtime when threshold exceeded
+void fsrTask(void *arg) {
+  bool warning_active = false;
+
+  for (;;) {
+    // Block until RUNNING state
+    xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
+                        portMAX_DELAY);
+
+    while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
+      float voltage = pressure_sensor.read();
+      bool exceeded = pressure_sensor.is_pressed();
+
+      if (exceeded && !warning_active) {
+        // Threshold crossed -- switch to realtime playback and buzz
+        logger.info("FSR: threshold exceeded ({:.1f} mV), activating warning", voltage);
+        haptic.set_mode(HAPTICS::DRV2605L::Mode::REALTIME_PLAYBACK);
+        haptic.set_realtime_value(FSR_HAPTIC_RTP_VALUE);
+        warning_active = true;
+
+      } else if (!exceeded && warning_active) {
+        // Pressure dropped below threshold -- stop buzzing and restore mode
+        logger.info("FSR: pressure released ({:.1f} mV), deactivating warning", voltage);
+        haptic.set_realtime_value(0);
+        haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+        warning_active = false;
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(FSR_POLL_INTERVAL_MS));
+    }
+
+    // Exiting RUNNING state -- ensure motor is off and mode restored
+    if (warning_active) {
+      haptic.set_realtime_value(0);
+      haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+      warning_active = false;
+    }
+  }
+}
+
+// Poll boot button for short press (toggle run) and long press (calibration)
+void buttonTask(void *arg) {
+  bool was_pressed = false;
+  TickType_t press_start = 0;
+  bool long_press_fired = false;
+
+  for (;;) {
+    bool pressed = !boot_button.getLevel(); // active low with pullup
+
+    if (pressed && !was_pressed) {
+      // Button just pressed -- record start time
+      press_start = xTaskGetTickCount();
+      long_press_fired = false;
+
+    } else if (pressed && was_pressed && !long_press_fired) {
+      // Button held -- check if long press threshold reached
+      uint32_t held_ms = (xTaskGetTickCount() - press_start) * portTICK_PERIOD_MS;
+      if (held_ms >= LONG_PRESS_MS) {
+        Event e = Event::START_CALIBRATION;
+        xQueueSend(eventQueue, &e, 0);
+        long_press_fired = true;
+      }
+
+    } else if (!pressed && was_pressed) {
+      // Button released
+      if (!long_press_fired) {
+        uint32_t held_ms = (xTaskGetTickCount() - press_start) * portTICK_PERIOD_MS;
+        if (held_ms >= BUTTON_DEBOUNCE_MS) {
+          // Short press -- toggle run
+          Event e = Event::TOGGLE_RUN;
+          xQueueSend(eventQueue, &e, 0);
+        }
+      }
+    }
+
+    was_pressed = pressed;
+    vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
+  }
+}
+
+// Run FSR calibration sequence guided by haptic feedback
+void calibrationTask(void *arg) {
+  for (;;) {
+    // Block until CALIBRATING state
+    xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::CALIBRATING), false,
+                        true, portMAX_DELAY);
+
+    // Phase 1: Baseline (no pressure)
+    haptic_notify(HapticEvent::CAL_START);
+    logger.info("Calibration: release pressure from FSR...");
+    vTaskDelay(pdMS_TO_TICKS(CAL_PHASE_DELAY_MS));
+
+    pressure_sensor.calibrate_baseline();
+    logger.info("Calibration: baseline = {:.1f} mV", pressure_sensor.get_baseline());
+
+    // Phase 2: Max pressure
+    haptic_notify(HapticEvent::CAL_PHASE_TWO);
+    logger.info("Calibration: apply full pressure to FSR...");
+    vTaskDelay(pdMS_TO_TICKS(CAL_PHASE_DELAY_MS));
+
+    pressure_sensor.calibrate_max();
+    logger.info("Calibration: max = {:.1f} mV", pressure_sensor.get_max());
+
+    // Compute and set threshold
+    float threshold =
+        pressure_sensor.get_baseline() +
+        (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * FSR_THRESHOLD_PERCENT;
+    pressure_sensor.set_pressure_threshold(threshold);
+    logger.info("Calibration: threshold set to {:.1f} mV", threshold);
+
+    // Signal completion
+    haptic_notify(HapticEvent::CAL_COMPLETE);
+
+    Event e = Event::CALIBRATION_DONE;
+    xQueueSend(eventQueue, &e, 0);
   }
 }
 
@@ -563,6 +712,10 @@ static void switch_states(SystemState currstate, SystemState nextstate) {
   case SystemState::RUNNING:
     s = "RUNNING";
     break;
+
+  case SystemState::CALIBRATING:
+    s = "CALIBRATING";
+    break;
   default:
     s = "ERROR";
     break;
@@ -609,6 +762,10 @@ void controlTask(void *arg) {
           haptic_notify(HapticEvent::RUN_START);
           break;
 
+        case Event::START_CALIBRATION:
+          switch_states(SystemState::READY, SystemState::CALIBRATING);
+          break;
+
         case Event::BLE_DISCONNECTED:
           advertiseBLE();
           switch_states(SystemState::READY, SystemState::IDLE);
@@ -619,6 +776,23 @@ void controlTask(void *arg) {
           break;
         }
 
+        break;
+
+      case SystemState::CALIBRATING: // FSR calibration in progress
+        switch (e) {
+        case Event::CALIBRATION_DONE:
+          switch_states(SystemState::CALIBRATING, SystemState::READY);
+          break;
+
+        case Event::BLE_DISCONNECTED:
+          advertiseBLE();
+          switch_states(SystemState::CALIBRATING, SystemState::IDLE);
+          haptic_notify(HapticEvent::BLE_DISCONNECT);
+          break;
+
+        default:
+          break;
+        }
         break;
 
       case SystemState::RUNNING: // logging and transmitting data
@@ -647,16 +821,6 @@ void controlTask(void *arg) {
     }
   }
 }
-// ---------------------------------------------------------------------
-// ISRs
-// ---------------------------------------------------------------------
-// on boot button press
-static void IRAM_ATTR boot_button_isr(void *arg) {
-  Event e = Event::TOGGLE_RUN;
-  // Start Run: if in idle -> running
-  xQueueSendFromISR(eventQueue, &e, 0);
-}
-
 // ---------------------------------------------------------------------
 //  BLE
 // ---------------------------------------------------------------------
@@ -694,12 +858,6 @@ esp_err_t initSystem() {
       Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
   logger.info("Enabled QT Stemma Port");
 
-  // Attach interrupt to boot button
-  ESP_RETURN_ON_ERROR(
-      boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, nullptr),
-      "SYS_INIT", "Failed to set interrupt for boot button.");
-  logger.info("Enabled Boot Button");
-
   // Initialize LED
   LED::led red_led = LED::led(LED::RED_LED);
 
@@ -728,6 +886,11 @@ esp_err_t initSystem() {
 
   // setup force sensor
   pressure_sensor.set_calibration(FSR_LOW, FSR_HIGH);
+
+  // set pressure threshold at 50% of calibrated range
+  float fsr_threshold = FSR_LOW + (FSR_HIGH - FSR_LOW) * 0.5f;
+  pressure_sensor.set_pressure_threshold(fsr_threshold);
+  logger.info("FSR threshold set to {:.1f} mV", fsr_threshold);
 
   // Haptic setup
   if (!haptic.init()) {
@@ -843,6 +1006,15 @@ extern "C" void app_main() {
 
   // Create a task that plays haptic events from the queue
   xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
+
+  // Create a task that monitors FSR and triggers haptic warning
+  xTaskCreate(fsrTask, "fsr_task", 4096, NULL, 5, &fsr_task_handle);
+
+  // Create a task that polls the boot button for short/long press
+  xTaskCreate(buttonTask, "button", 2048, NULL, 7, &button_task_handle);
+
+  // Create a task that runs the FSR calibration sequence
+  xTaskCreate(calibrationTask, "calibrate", 4096, NULL, 5, &calibration_task_handle);
 
   // Indicate boot complete
   haptic_notify(HapticEvent::BOOT);
