@@ -169,24 +169,24 @@ static QueueHandle_t eventQueue;
 
 // Task handles
 static TaskHandle_t imu_task_handle = nullptr;
-static TaskHandle_t flash_writer_task_handle = nullptr;
+//static TaskHandle_t flash_writer_task_handle = nullptr;
 static TaskHandle_t control_task_handle = nullptr;
-static TaskHandle_t upload_task_handle = nullptr;
+//static TaskHandle_t upload_task_handle = nullptr;
 static TaskHandle_t battery_task_handle = nullptr;
-static TaskHandle_t haptic_task_handle = nullptr;
+//static TaskHandle_t haptic_task_handle = nullptr;
 
 // queue for imu data
-static QueueHandle_t imuQueue = nullptr;
+// static QueueHandle_t imuQueue = nullptr;
 
 // queue for haptic events
-static QueueHandle_t hapticQueue = nullptr;
+// static QueueHandle_t hapticQueue = nullptr;
 
 // Enqueue a haptic event
-static inline void haptic_notify(HapticEvent event) {
-  if (hapticQueue != nullptr) {
-    xQueueSend(hapticQueue, &event, 0); // non-blocking, drop if queue full
-  }
-}
+// static inline void haptic_notify(HapticEvent event) {
+//   if (hapticQueue != nullptr) {
+//     xQueueSend(hapticQueue, &event, 0); // non-blocking, drop if queue full
+//   }
+// }
 
 // structure of data to be stored in sensor data queue
 struct quat_sample_t {
@@ -219,9 +219,9 @@ void imuTask(void *arg) {
       }
 
       // push to queue (non-blocking, drop if full)
-      if (xQueueSend(imuQueue, &sample, 0) != pdTRUE) {
-        logger.warn("IMU queue full, sample dropped");
-      }
+      // if (xQueueSend(imuQueue, &sample, 0) != pdTRUE) {
+      //   logger.warn("IMU queue full, sample dropped");
+      // }
 
       // wait until imu frequency (100Hz)
       xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(1000 / IMU_FREQ));
@@ -230,34 +230,37 @@ void imuTask(void *arg) {
 }
 
 // Batch read from queue and write to flash
-void flashWriterTask(void *arg) {
-  quat_sample_t sample;
+// void flashWriterTask(void *arg) {
+//   quat_sample_t sample;
 
-  for (;;) {
-    // Wait until Running
-    xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
-                        portMAX_DELAY);
+//   for (;;) {
+//     // Wait until Running
+//     xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
+//                         portMAX_DELAY);
 
-    // TODO: Is there a need to reinitialize flash log?
+//     // TODO: Is there a need to reinitialize flash log?
 
-    while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
-      // Block waiting for first sample
-      if (xQueueReceive(imuQueue, &sample, portMAX_DELAY) == pdTRUE) {
-        // Write batch to flash
-        STORAGE::Quaternion q = {
-            .w = sample.quat.w,
-            .x = sample.quat.x,
-            .y = sample.quat.y,
-            .z = sample.quat.z,
-        };
+//     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
+//       // Block waiting for first sample
+//       if (xQueueReceive(imuQueue, &sample, portMAX_DELAY) == pdTRUE) {
+//         // WARNING: Primarily skipped for battery logging.
+//         vTaskDelay(pdMS_TO_TICKS(10));
+//         continue; 
+//         // Write batch to flash
+//         STORAGE::Quaternion q = {
+//             .w = sample.quat.w,
+//             .x = sample.quat.x,
+//             .y = sample.quat.y,
+//             .z = sample.quat.z,
+//         };
 
-        if (flash_log.append(q, sample.timestamp_us) != ESP_OK) {
-          logger.error("Failed to append sample to flash log");
-        }
-      }
-    }
-  }
-}
+//         if (flash_log.append(q, sample.timestamp_us) != ESP_OK) {
+//           logger.error("Failed to append sample to flash log");
+//         }
+//       }
+//     }
+//   }
+// }
 
 enum class UploadState : uint8_t {
   BUFFER_FLASH_FRAME,
@@ -288,6 +291,10 @@ void uploadTask(void *arg) {
     int64_t ack_wait_us;
 
     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
+      // WARNING: Skipped for battery logging
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue; 
+
       switch (upload_state) {
       case UploadState::BUFFER_FLASH_FRAME: {
         size_t frames_read{0};
@@ -456,38 +463,38 @@ static const HapticSequence haptic_sequences[] = {
 } // namespace
 
 // Dequeue HapticEvents and play the corresponding effect sequence
-void hapticTask(void *arg) {
-  HapticEvent event;
-  for (;;) {
-    // Block indefinitely until an event is enqueued
-    if (xQueueReceive(hapticQueue, &event, portMAX_DELAY) != pdTRUE)
-      continue;
+// void hapticTask(void *arg) {
+//   HapticEvent event;
+//   for (;;) {
+//     // Block indefinitely until an event is enqueued
+//     if (xQueueReceive(hapticQueue, &event, portMAX_DELAY) != pdTRUE)
+//       continue;
 
-    // Find the matching sequence
-    const HapticSequence *seq = nullptr;
-    for (const auto &s : haptic_sequences) {
-      if (s.event == event) {
-        seq = &s;
-        break;
-      }
-    }
+//     // Find the matching sequence
+//     const HapticSequence *seq = nullptr;
+//     for (const auto &s : haptic_sequences) {
+//       if (s.event == event) {
+//         seq = &s;
+//         break;
+//       }
+//     }
 
-    if (seq == nullptr) {
-      logger.warn("hapticTask: unknown event {}", static_cast<uint8_t>(event));
-      continue;
-    }
+//     if (seq == nullptr) {
+//       logger.warn("hapticTask: unknown event {}", static_cast<uint8_t>(event));
+//       continue;
+//     }
 
-    // Count entries up to (but not including) the terminator
-    uint8_t count = seq->count;
-    if (count > 0) {
-      if (haptic.play(seq->effects, count)) {
-        logger.debug("hapticTask: played event {}", static_cast<uint8_t>(event));
-      } else {
-        logger.warn("hapticTask: I2C write failed for event {}", static_cast<uint8_t>(event));
-      }
-    }
-  }
-}
+//     // Count entries up to (but not including) the terminator
+//     uint8_t count = seq->count;
+//     if (count > 0) {
+//       if (haptic.play(seq->effects, count)) {
+//         logger.debug("hapticTask: played event {}", static_cast<uint8_t>(event));
+//       } else {
+//         logger.warn("hapticTask: I2C write failed for event {}", static_cast<uint8_t>(event));
+//       }
+//     }
+//   }
+// }
 
 // Periodically read fuel gauge and push battery level to BLE battery service
 void batteryTask(void *arg) {
@@ -589,10 +596,14 @@ void controlTask(void *arg) {
         break;
 
       case SystemState::IDLE: // waiting for ble connection
+        // WARNING: Auto switch for battery logging
+        switch_states(SystemState::IDLE, SystemState::READY);
+        // haptic_notify(HapticEvent::BLE_CONNECT);
+        break; 
         switch (e) {
         case Event::BLE_CONNECTED:
           switch_states(SystemState::IDLE, SystemState::READY);
-          haptic_notify(HapticEvent::BLE_CONNECT);
+          // haptic_notify(HapticEvent::BLE_CONNECT);
           break;
 
         default:
@@ -606,13 +617,13 @@ void controlTask(void *arg) {
         case Event::TOGGLE_RUN:
           startSensors();
           switch_states(SystemState::READY, SystemState::RUNNING);
-          haptic_notify(HapticEvent::RUN_START);
+          // haptic_notify(HapticEvent::RUN_START);
           break;
 
         case Event::BLE_DISCONNECTED:
           advertiseBLE();
           switch_states(SystemState::READY, SystemState::IDLE);
-          haptic_notify(HapticEvent::BLE_DISCONNECT);
+          // haptic_notify(HapticEvent::BLE_DISCONNECT);
           break;
 
         default:
@@ -622,22 +633,25 @@ void controlTask(void *arg) {
         break;
 
       case SystemState::RUNNING: // logging and transmitting data
-        switch (e) {
-        case Event::TOGGLE_RUN:
-          switch_states(SystemState::RUNNING, SystemState::READY);
-          haptic_notify(HapticEvent::RUN_STOP);
-          break;
+        // WARNING: Disabled for continuous logging
+        break; 
 
-        case Event::BLE_DISCONNECTED:
-          advertiseBLE();
-          switch_states(SystemState::RUNNING, SystemState::IDLE);
-          haptic_notify(HapticEvent::BLE_DISCONNECT);
-          break;
+        // switch (e) {
+        // case Event::TOGGLE_RUN:
+        //   switch_states(SystemState::RUNNING, SystemState::READY);
+        //   haptic_notify(HapticEvent::RUN_STOP);
+        //   break;
 
-        default:
-          break;
-        }
-        break;
+        // case Event::BLE_DISCONNECTED:
+        //   advertiseBLE();
+        //   switch_states(SystemState::RUNNING, SystemState::IDLE);
+        //   haptic_notify(HapticEvent::BLE_DISCONNECT);
+        //   break;
+
+        // default:
+        //   break;
+        // }
+        // break;
 
       default: // could switch to default state being IDLE
         // Indicate Error
@@ -753,12 +767,12 @@ esp_err_t initSystem() {
   ESP_RETURN_ON_ERROR(flash_log.init(), "SYS_INIT", "Failed to initialize flash log.");
 
   // init imu queue
-  imuQueue = xQueueCreate(IMU_QUEUE_SIZE, sizeof(quat_sample_t));
+  // imuQueue = xQueueCreate(IMU_QUEUE_SIZE, sizeof(quat_sample_t));
 
-  if (imuQueue == nullptr) {
-    ESP_LOGE("SYS_INIT", "Failed to create IMU queue.");
-    return ESP_ERR_INVALID_STATE;
-  }
+  // if (imuQueue == nullptr) {
+  //   ESP_LOGE("SYS_INIT", "Failed to create IMU queue.");
+  //   return ESP_ERR_INVALID_STATE;
+  // }
 
   // Configure BLE
   BLE::BleModule::Config ble_config;
@@ -793,10 +807,10 @@ esp_err_t initSystem() {
   }
 
   // Create haptic queue
-  hapticQueue = xQueueCreate(HAPTIC_QUEUE_LENGTH, sizeof(HapticEvent));
-  if (hapticQueue == nullptr) {
-    logger.error("Failed to create haptic queue");
-  }
+  // hapticQueue = xQueueCreate(HAPTIC_QUEUE_LENGTH, sizeof(HapticEvent));
+  // if (hapticQueue == nullptr) {
+  //   logger.error("Failed to create haptic queue");
+  // }
 
   // turn on led to indicate successful init
   red_led.turn_on();
@@ -827,7 +841,7 @@ extern "C" void app_main() {
 
   // Create Tasks
   // Create a task that will write samples to the flash
-  xTaskCreate(flashWriterTask, "flash_writer", 4096, NULL, 6, &flash_writer_task_handle);
+  // xTaskCreate(flashWriterTask, "flash_writer", 4096, NULL, 6, &flash_writer_task_handle);
 
   // Create a task that will capture sensor data
   xTaskCreate(imuTask, "imu_task", 4096, NULL, 8, &imu_task_handle);
@@ -836,14 +850,14 @@ extern "C" void app_main() {
   xTaskCreate(controlTask, "control", 4096, NULL, 9, &control_task_handle);
 
   // Create a task that will transmit stored data over BLE
-  xTaskCreate(uploadTask, "upload", 4096, NULL, 4, &upload_task_handle);
+  // xTaskCreate(uploadTask, "upload", 4096, NULL, 4, &upload_task_handle);
 
   // Create a task that periodically updates the BLE battery level
   xTaskCreate(batteryTask, "battery", 3072, NULL, 2, &battery_task_handle);
 
   // Create a task that plays haptic events from the queue
-  xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
+  // xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
 
   // Indicate boot complete
-  haptic_notify(HapticEvent::BOOT);
+  // haptic_notify(HapticEvent::BOOT);
 }
