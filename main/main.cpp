@@ -115,7 +115,7 @@ static constexpr uint32_t UPLOAD_RETRY_DELAY_MS{100};
 static constexpr int64_t UPLOAD_ACK_TIMEOUT_US{5'000'000}; // 5 seconds
 
 // battery task timing
-static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{30'000}; // 30 seconds
+static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{10'000}; // 30 seconds
 
 // imu frequency
 static constexpr float IMU_FREQ{100};
@@ -507,6 +507,8 @@ void batteryTask(void *arg) {
     }; 
 
     int64_t timestamp_us = esp_timer_get_time(); 
+
+    logger.info("The battery level is: {}", level); 
 
     if (flash_log.append(battery_level, timestamp_us) != ESP_OK) {
       logger.error("Failed to append sample to flash log");

@@ -8,7 +8,7 @@
 namespace LED {
 
 /* Constants */
-constexpr gpio_num_t RED_LED{GPIO_NUM_13};
+constexpr gpio_num_t RED_LED{GPIO_NUM_9};
 constexpr bool LED_OFF{0};
 constexpr bool LED_ON{1};
 
