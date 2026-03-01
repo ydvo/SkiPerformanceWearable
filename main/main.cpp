@@ -1,3 +1,5 @@
+/** main.cpp - main application entry point and FreeRTOS task definitions */
+
 #include "NimBLELocalValueAttribute.h"
 #include "flash_log.hpp"
 #include "freertos/FreeRTOS.h"
@@ -139,6 +141,11 @@ static constexpr uint8_t EVENT_QUEUE_LENGTH{8};
 // haptic queue length - small, events are low-frequency
 static constexpr uint8_t HAPTIC_QUEUE_LENGTH{4};
 
+/*! @brief Haptic event identifiers for the DRV2605L driver.
+ *
+ * Each value corresponds to a distinct haptic feedback pattern defined in
+ * `haptic_sequences`.
+ */
 enum class HapticEvent : uint8_t {
   BOOT,           // device powered on and init succeeded
   BLE_CONNECT,    // client connected
@@ -156,6 +163,10 @@ enum class HapticEvent : uint8_t {
 // Setup for Control Flow
 // ---------------------------------------------------------------------
 // possible states
+/*! @brief System state bitmask used with FreeRTOS EventGroup.
+ *
+ * Each state occupies a distinct bit; multiple bits may be set simultaneously.
+ */
 enum class SystemState : EventBits_t {
   SLEEP = BIT0,
   IDLE = BIT1,
@@ -169,6 +180,7 @@ enum class SystemState : EventBits_t {
 static EventGroupHandle_t system_state;
 
 // events
+/*! @brief Application events posted to the control task queue. */
 enum class Event : uint8_t {
   BLE_CONNECTED,
   BLE_DISCONNECTED,
@@ -203,7 +215,16 @@ static QueueHandle_t imuQueue = nullptr;
 // queue for haptic events
 static QueueHandle_t hapticQueue = nullptr;
 
-// Enqueue a haptic event
+/**
+ * @brief Enqueue a haptic event for asynchronous processing.
+ *
+ * The function posts the specified @p event to the global @c hapticQueue.
+ * If the queue is not yet created or is full, the event is dropped silently.
+ * This call is non‑blocking and safe to invoke from any FreeRTOS task
+ * (including ISRs, as it uses the non‑blocking queue API).
+ *
+ * @param event Identifier of the haptic event to enqueue.
+ */
 static inline void haptic_notify(HapticEvent event) {
   if (hapticQueue != nullptr) {
     xQueueSend(hapticQueue, &event, 0); // non-blocking, drop if queue full
@@ -211,12 +232,22 @@ static inline void haptic_notify(HapticEvent event) {
 }
 
 // structure of data to be stored in sensor data queue
+/*! @brief Queued IMU sample containing timestamp and quaternion. */
 struct quat_sample_t {
   uint64_t timestamp_us;
   SENSORS::Imu::Quaternion quat;
 };
 
 // Capture sensor data and push to queue
+/*! 
+ * @brief FreeRTOS task that reads IMU samples at IMU_FREQ and enqueues them.
+ *
+ * The task blocks on the RUNNING state event group, timestamps each sample
+ * with `esp_timer_get_time()`, and attempts a non‑blocking enqueue to
+ * `imuQueue`. If the queue is full the sample is dropped and a warning is logged.
+ *
+ * @param arg Unused task argument (must be nullptr when created).
+ */
 void imuTask(void *arg) {
   TickType_t lastWake;
   quat_sample_t sample;
@@ -252,6 +283,15 @@ void imuTask(void *arg) {
 }
 
 // Batch read from queue and write to flash
+/*! 
+ * @brief FreeRTOS task that dequeues IMU samples and writes them to flash.
+ *
+ * While the system is in RUNNING state it blocks on `imuQueue` for the first
+ * sample, then appends each received quaternion to the flash log. Errors are
+ * logged via `logger.error`.
+ *
+ * @param arg Unused task argument.
+ */
 void flashWriterTask(void *arg) {
   quat_sample_t sample;
 
@@ -281,6 +321,7 @@ void flashWriterTask(void *arg) {
   }
 }
 
+/*! @brief State machine for flash-to-BLE upload handling. */
 enum class UploadState : uint8_t {
   BUFFER_FLASH_FRAME,
   INITIALIZE_BLE_FRAME,
@@ -291,6 +332,16 @@ enum class UploadState : uint8_t {
 };
 
 // Read stored samples from flash and send over BLE
+/*! 
+ * @brief FreeRTOS task that streams flash‑stored IMU data over BLE.
+ *
+ * The task reads frames from `flash_log`, builds BLE frames and notifies the
+ * client. It then waits for an acknowledgment with a timeout defined by
+ * `UPLOAD_ACK_TIMEOUT_US`. Retransmission and timeout handling are performed
+ * according to `UploadState`.
+ *
+ * @param arg Unused task argument.
+ */
 void uploadTask(void *arg) {
   uint32_t total_frames_sent = 0;
   uint32_t total_ack_timeouts = 0;
@@ -445,6 +496,13 @@ void uploadTask(void *arg) {
 namespace {
 using E = HAPTICS::DRV2605L::EFFECTS;
 
+/**
+ * @brief Mapping from HapticEvent to DRV2605L effect sequence.
+ *
+ * Each entry defines the number of effects (`count`) and an array of effect
+ * identifiers terminated by `EFFECTS::END`. This table is used by the hapticTask
+ * to look up the appropriate pattern for a given @c HapticEvent.
+ */
 struct HapticSequence {
   HapticEvent event;
   size_t count;
@@ -487,6 +545,15 @@ static const HapticSequence haptic_sequences[] = {
 } // namespace
 
 // Dequeue HapticEvents and play the corresponding effect sequence
+/*! 
+ * @brief FreeRTOS task that processes queued HapticEvent values.
+ *
+ * The task blocks on `hapticQueue`, looks up the corresponding effect
+ * sequence in `haptic_sequences`, and plays it via the DRV2605L driver. If an
+ * unknown event is received a warning is logged.
+ *
+ * @param arg Unused task argument.
+ */
 void hapticTask(void *arg) {
   HapticEvent event;
   for (;;) {
@@ -521,6 +588,16 @@ void hapticTask(void *arg) {
 }
 
 // Monitor FSR pressure and drive haptic motor in realtime when threshold exceeded
+/*! 
+ * @brief FreeRTOS task that monitors the force‑sensitive resistor.
+ *
+ * While the system is RUNNING the task reads the sensor voltage and checks
+ * whether the pressure exceeds the calibrated threshold. If the threshold is
+ * crossed a realtime haptic warning is started; when pressure falls back below
+ * the threshold the warning is stopped.
+ *
+ * @param arg Unused task argument.
+ */
 void fsrTask(void *arg) {
   bool warning_active = false;
 
@@ -561,6 +638,15 @@ void fsrTask(void *arg) {
 }
 
 // Poll boot button for short press (toggle run) and long press (calibration)
+/*! 
+ * @brief FreeRTOS task that debounces the boot button and generates events.
+ *
+ * The task samples the button at `BUTTON_POLL_MS` intervals. Short presses
+ * toggle the RUN state; long presses (>= `LONG_PRESS_MS`) trigger the
+ * calibration sequence. Events are posted to `eventQueue`.
+ *
+ * @param arg Unused task argument.
+ */
 void buttonTask(void *arg) {
   bool was_pressed = false;
   TickType_t press_start = 0;
@@ -601,6 +687,16 @@ void buttonTask(void *arg) {
 }
 
 // Run FSR calibration sequence guided by haptic feedback
+/*! 
+ * @brief FreeRTOS task that guides the user through FSR calibration.
+ *
+ * The task runs when the system enters the CALIBRATING state. It uses haptic
+ * feedback to prompt the user for baseline (no pressure) and max‑pressure steps,
+ * then computes a pressure threshold based on `FSR_THRESHOLD_PERCENT` and stores
+ * it in the sensor instance. Upon completion it notifies the control task.
+ *
+ * @param arg Unused task argument.
+ */
 void calibrationTask(void *arg) {
   for (;;) {
     // Block until CALIBRATING state
@@ -639,6 +735,15 @@ void calibrationTask(void *arg) {
 }
 
 // Periodically read fuel gauge and push battery level to BLE battery service
+/*! 
+ * @brief FreeRTOS task that periodically reads the MAX1704X fuel gauge.
+ *
+ * When BLE is connected the task publishes the battery level (percentage)
+ * to the BLE Battery Service. Errors updating the characteristic are logged.
+ * The task runs at `BATTERY_UPDATE_INTERVAL_MS` intervals.
+ *
+ * @param arg Unused task argument.
+ */
 void batteryTask(void *arg) {
   for (;;) {
     if (ble.is_connected()) {
@@ -661,6 +766,15 @@ void batteryTask(void *arg) {
 // ---------------------------------------------------------------------
 
 // idle mode callback to sleep everything and start ble_advertising
+/*! 
+ * @brief Starts BLE advertising and logs the device name.
+ *
+ * Intended to be called when the system enters the SLEEP or IDLE state.
+ * TODO: add power‑down of IMU, FSR, and haptics.
+ *
+ * @return ESP_OK on success or an ESP‑IDF error code propagated from
+ *         `ble.start_advertising()`.
+ */
 esp_err_t advertiseBLE() {
   /* TODO:
    *  - sleep imu
@@ -677,6 +791,14 @@ esp_err_t advertiseBLE() {
   return ESP_OK;
 }
 
+/*! 
+ * @brief Placeholder for waking up sensors (IMU, FSR) and starting haptics.
+ *
+ * Currently a stub; future implementation should power up peripherals and
+ * configure them for data collection.
+ *
+ * @return ESP_OK on success (always returns ESP_OK in current stub).
+ */
 esp_err_t startSensors() {
   /* TODO:
    *  - wake imu
@@ -688,6 +810,15 @@ esp_err_t startSensors() {
 }
 
 // helper to transition states
+/*! 
+ * @brief Helper that atomically updates the system state event group.
+ *
+ * Sets bits for `nextstate` and clears bits for `currstate`. Also logs the
+ * transition using `logger.info`.
+ *
+ * @param currstate Current system state (bits to clear).
+ * @param nextstate Target system state (bits to set).
+ */
 static void switch_states(SystemState currstate, SystemState nextstate) {
   // set next state
   xEventGroupSetBits(system_state, static_cast<EventBits_t>(nextstate));
@@ -725,6 +856,15 @@ static void switch_states(SystemState currstate, SystemState nextstate) {
 
 // state machine
 //  - transitions on Events
+/*! 
+ * @brief FreeRTOS task implementing the system state machine.
+ *
+ * Waits for `Event` messages on `eventQueue` and transitions between
+ * `SystemState` values, invoking appropriate actions such as BLE advertising,
+ * haptic notifications, and sensor control.
+ *
+ * @param arg Unused task argument.
+ */
 void controlTask(void *arg) {
   Event e;
   while (true) {
@@ -826,6 +966,14 @@ void controlTask(void *arg) {
 // ---------------------------------------------------------------------
 
 // callbacks to change system state on connection status
+/*! 
+ * @brief BLE connection callback.
+ *
+ * Enqueues `Event::BLE_CONNECTED` to the control task's event queue. Logs a
+ * warning if the queue is full. Also emits an informational log.
+ *
+ * @param info Connection info (unused).
+ */
 void on_ble_connect(NimBLEConnInfo &info) {
   Event e = Event::BLE_CONNECTED;
   BaseType_t status = xQueueSend(eventQueue, &e, 0);
@@ -836,6 +984,15 @@ void on_ble_connect(NimBLEConnInfo &info) {
   logger.info("BLE: Client connected \n");
 }
 
+/*! 
+ * @brief BLE disconnection callback.
+ *
+ * Enqueues `Event::BLE_DISCONNECTED` to the control task's event queue. Logs a
+ * warning if the queue is full and an informational message.
+ *
+ * @param info Connection info (unused).
+ * @param reason Reason for disconnection (unused).
+ */
 void on_ble_disconnect(NimBLEConnInfo &info, espp::BleGattServer::DisconnectReason reason) {
 
   Event e = Event::BLE_DISCONNECTED;
@@ -850,6 +1007,14 @@ void on_ble_disconnect(NimBLEConnInfo &info, espp::BleGattServer::DisconnectReas
 //  System Initialization
 // ---------------------------------------------------------------------
 
+/*! 
+ * @brief Performs application-wide initialization of peripherals and components.
+ *
+ * Sets up I2C, IMU, fuel gauge, force sensor, haptic driver, SPI flash, BLE,
+ * and queues. Logs progress and returns an ESP‑IDF error code on failure.
+ *
+ * @return ESP_OK on success or an error code indicating the failure point.
+ */
 esp_err_t initSystem() {
   logger.info("Initializing...");
 
@@ -971,6 +1136,13 @@ esp_err_t initSystem() {
 //  Application Entry Point
 // ---------------------------------------------------------------------
 
+/*! 
+ * @brief Application entry point required by ESP-IDF.
+ *
+ * Sets log levels, calls `initSystem()`, creates the system state event
+ * group, starts BLE advertising, creates all FreeRTOS tasks, and notifies the
+ * haptic motor that boot is complete.
+ */
 extern "C" void app_main() {
   // set log level for debug
   esp_log_level_set("FLASH_LOG", ESP_LOG_WARN);
