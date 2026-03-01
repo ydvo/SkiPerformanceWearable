@@ -5,7 +5,7 @@
 namespace STORAGE {
 
 constexpr uint32_t MAGIC = 0xDEADBEEF;
-constexpr size_t SAMPLES_PER_FRAME = 10; 
+constexpr size_t SAMPLES_PER_FRAME = 20; 
 
 struct __attribute__((packed)) Quaternion {
   float w;
@@ -14,7 +14,12 @@ struct __attribute__((packed)) Quaternion {
   float z;
 };
 
+struct __attribute__((packed)) BatteryLevel {
+  float value; 
+};
+
 static_assert(sizeof(Quaternion) == 16, "Quaternion must be 16 bytes packed."); 
+static_assert(sizeof(BatteryLevel) == 4, "Battery level must be 4 bytes packed"); 
 
 template <typename T>
 class FlashLog { 
