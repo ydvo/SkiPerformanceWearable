@@ -42,10 +42,12 @@ public:
 
   explicit FlashLog(STORAGE::SpiFlashDevice &dev) noexcept;
   esp_err_t init(); 
+  esp_err_t init(uint32_t init_sector); 
   esp_err_t append(const T &sample, const uint64_t timestamp_us);
   esp_err_t read(Frame *dst, size_t max_frames, size_t *frames_read);
   uint32_t read_addr() const; 
   esp_err_t read_immut(Frame *dst, size_t max_frames, size_t *frames_read, uint32_t read_addr_from, uint32_t *read_addr_new) const;
+  esp_err_t read_unsafe(Frame *dst, size_t max_frames, size_t *frames_read, uint32_t read_addr_from, uint32_t *read_addr_new) const; 
   bool is_full() const;
 
 private: 

@@ -30,6 +30,22 @@ namespace STORAGE {
     return ESP_OK; 
   }
 
+  template <typename T> 
+  esp_err_t FlashLog<T>::init(uint32_t init_sector) {
+    uint32_t start_sector = init_sector; 
+
+    write_addr_ = start_sector * dev_.sector_size();
+    read_addr_  = write_addr_;
+    seq_ = 0;
+    sample_idx_ = 0; 
+
+    ESP_LOGI(
+      TAG, "Initialized flash with read=0x%x write=0x%x seq=%u", read_addr_, write_addr_, seq_
+    ); 
+
+    return ESP_OK; 
+  }
+
   template <typename T>
   esp_err_t FlashLog<T>::append(const T &sample, const uint64_t timestamp_us) {
     sample_buffer_[sample_idx_++] = {
@@ -166,6 +182,32 @@ namespace STORAGE {
     }
 
     *read_addr_new = read_addr; 
+
+    return ESP_OK; 
+  }
+
+  template <typename T> 
+  esp_err_t FlashLog<T>::read_unsafe(Frame *dst, size_t max_frames, size_t *frames_read, uint32_t read_addr_from, uint32_t *read_addr_new) const {
+    *frames_read = 0;
+    uint32_t read_addr = read_addr_from; 
+
+    while (*frames_read < max_frames) {
+      Frame frame{}; 
+      ESP_RETURN_ON_ERROR(
+        dev_.read(read_addr, &frame, sizeof(Frame)),
+        TAG, "Failed to read the flash device."
+      ); 
+
+      if (!valid(frame)) {
+        break; 
+      }
+
+      dst[*frames_read] = frame;
+      read_addr = next_addr(read_addr); 
+      (*frames_read)++; 
+    }
+
+    *read_addr_new = read_addr;
 
     return ESP_OK; 
   }

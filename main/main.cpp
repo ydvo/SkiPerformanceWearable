@@ -90,12 +90,17 @@ BLE::BleModule ble;
 Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
                          Common::GPIO::PULLUP);
 
+Common::GPIO big_button(GPIO_NUM_6, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON, Common::GPIO::PULLUP); 
+
+LED::led green_led = LED::led(LED::GREEN_LED);
+
 // ---------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------
 
 // button debounce
 static constexpr uint32_t BOOT_BUTTON_DEBOUNCE_MS{200};
+static constexpr uint32_t BIG_BUTTON_DEBOUNCE_MS{1000}; 
 
 // force sensor calibration value defaults
 static constexpr float FSR_LOW{0.00f};
@@ -115,7 +120,7 @@ static constexpr uint32_t UPLOAD_RETRY_DELAY_MS{100};
 static constexpr int64_t UPLOAD_ACK_TIMEOUT_US{5'000'000}; // 5 seconds
 
 // battery task timing
-static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{10'000}; // 30 seconds
+static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{1'000}; // 30 seconds
 
 // imu frequency
 static constexpr float IMU_FREQ{100};
@@ -146,6 +151,7 @@ enum class SystemState : EventBits_t {
   READY = BIT2,
   RUNNING = BIT3,
   ERROR = BIT4,
+  BATTERY_FLUSHING = BIT5,
 };
 
 // state var
@@ -156,6 +162,9 @@ enum class Event : uint8_t {
   BLE_CONNECTED,
   BLE_DISCONNECTED,
   TOGGLE_RUN,
+  BIG_BUTTON_PRESS,
+  BOOT_BUTTON_PRESS,
+  FLUSHING_DONE,
 };
 
 // statically allocated event queue
@@ -498,25 +507,54 @@ static const HapticSequence haptic_sequences[] = {
 
 // Periodically read fuel gauge and push battery level to BLE battery service
 void batteryTask(void *arg) {
+  STORAGE::FlashLog<STORAGE::BatteryLevel>::Frame flash_frame;
+  size_t frames_read{0};
+
   for (;;) {
-    float level = battery.cellPercent();
-    logger.debug("Battery: {}%", level);
+    xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING) | static_cast<EventBits_t>(SystemState::BATTERY_FLUSHING), false, false,
+                        portMAX_DELAY);
 
-    STORAGE::BatteryLevel battery_level {
-      .value = level
-    }; 
+    uint32_t read_addr {0}; 
 
-    int64_t timestamp_us = esp_timer_get_time(); 
+    while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::BATTERY_FLUSHING)) {
+      if (flash_log.read_unsafe(&flash_frame, 1, &frames_read, read_addr, &read_addr) != ESP_OK) {
+        logger.error("Failed to read unsafe the flash log."); 
+      } else {
+        if (frames_read == 0) {
+          Event e = Event::FLUSHING_DONE; 
+          xQueueSend(eventQueue, &e, 0); 
+          vTaskDelay(pdMS_TO_TICKS(10));
+          break; 
+        }
 
-    logger.info("The battery level is: {}", level); 
-
-    if (flash_log.append(battery_level, timestamp_us) != ESP_OK) {
-      logger.error("Failed to append sample to flash log");
+        for (auto &sample : flash_frame.payload) {
+          uint64_t timestamp_us = sample.timestamp_us;
+          float value = sample.data.value; 
+          logger.info("timestamp_us: {}, level: {}", timestamp_us, value); 
+        }
+      }
     }
-    // check stack usage
-    // UBaseType_t watermark = uxTaskGetStackHighWaterMark(nullptr);
-    // logger.info("BatteryTask watermark: {}", watermark);
-    vTaskDelay(pdMS_TO_TICKS(BATTERY_UPDATE_INTERVAL_MS));
+
+    while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
+      float level = battery.cellPercent();
+      logger.debug("Battery: {}%", level);
+
+      STORAGE::BatteryLevel battery_level {
+        .value = level
+      }; 
+
+      int64_t timestamp_us = esp_timer_get_time(); 
+
+      logger.info("The battery level is: {}", level); 
+
+      if (flash_log.append(battery_level, timestamp_us) != ESP_OK) {
+        logger.error("Failed to append sample to flash log");
+      }
+      // check stack usage
+      // UBaseType_t watermark = uxTaskGetStackHighWaterMark(nullptr);
+      // logger.info("BatteryTask watermark: {}", watermark);
+      vTaskDelay(pdMS_TO_TICKS(BATTERY_UPDATE_INTERVAL_MS));
+    }
   }
 }
 
@@ -576,6 +614,9 @@ static void switch_states(SystemState currstate, SystemState nextstate) {
   case SystemState::RUNNING:
     s = "RUNNING";
     break;
+  case SystemState::BATTERY_FLUSHING: 
+    s = "BATTERY FLUSHING"; 
+    break;
   default:
     s = "ERROR";
     break;
@@ -620,18 +661,13 @@ void controlTask(void *arg) {
       case SystemState::READY: // connected waiting for start
         // on run start, start collecting data
         switch (e) {
-        case Event::TOGGLE_RUN:
-          startSensors();
-          switch_states(SystemState::READY, SystemState::RUNNING);
-          // haptic_notify(HapticEvent::RUN_START);
+        case Event::BIG_BUTTON_PRESS: 
+          green_led.turn_off(); 
+          switch_states(SystemState::READY, SystemState::RUNNING); 
           break;
-
-        case Event::BLE_DISCONNECTED:
-          advertiseBLE();
-          switch_states(SystemState::READY, SystemState::IDLE);
-          // haptic_notify(HapticEvent::BLE_DISCONNECT);
+        case Event::BOOT_BUTTON_PRESS: 
+          switch_states(SystemState::READY, SystemState::BATTERY_FLUSHING); 
           break;
-
         default:
           break;
         }
@@ -640,25 +676,16 @@ void controlTask(void *arg) {
 
       case SystemState::RUNNING: // logging and transmitting data
         // WARNING: Disabled for continuous logging
-        break; 
-
-        // switch (e) {
-        // case Event::TOGGLE_RUN:
-        //   switch_states(SystemState::RUNNING, SystemState::READY);
-        //   haptic_notify(HapticEvent::RUN_STOP);
-        //   break;
-
-        // case Event::BLE_DISCONNECTED:
-        //   advertiseBLE();
-        //   switch_states(SystemState::RUNNING, SystemState::IDLE);
-        //   haptic_notify(HapticEvent::BLE_DISCONNECT);
-        //   break;
-
-        // default:
-        //   break;
-        // }
-        // break;
-
+        break;
+      case SystemState::BATTERY_FLUSHING: 
+        switch (e) {
+          case Event::FLUSHING_DONE:
+            switch_states(SystemState::BATTERY_FLUSHING, SystemState::READY); 
+            break; 
+          default: 
+            break; 
+        }
+        break;
       default: // could switch to default state being IDLE
         // Indicate Error
         xEventGroupSetBits(system_state, static_cast<EventBits_t>(SystemState::ERROR));
@@ -672,8 +699,13 @@ void controlTask(void *arg) {
 // ---------------------------------------------------------------------
 // on boot button press
 static void IRAM_ATTR boot_button_isr(void *arg) {
-  Event e = Event::TOGGLE_RUN;
+  Event e = Event::BOOT_BUTTON_PRESS;
   // Start Run: if in idle -> running
+  xQueueSendFromISR(eventQueue, &e, 0);
+}
+
+static void IRAM_ATTR big_button_isr(void *arg) {
+  Event e = Event::BIG_BUTTON_PRESS; 
   xQueueSendFromISR(eventQueue, &e, 0);
 }
 
@@ -711,17 +743,20 @@ esp_err_t initSystem() {
 
   // enable QT Stemma Port
   Common::GPIO stemma_qt_power =
-      Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
+    Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
   logger.info("Enabled QT Stemma Port");
 
   // Attach interrupt to boot button
   ESP_RETURN_ON_ERROR(
-      boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, nullptr),
-      "SYS_INIT", "Failed to set interrupt for boot button.");
+    boot_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, boot_button_isr, nullptr),
+    "SYS_INIT", "Failed to set interrupt for boot button.");
   logger.info("Enabled Boot Button");
 
-  // Initialize LED
-  LED::led red_led = LED::led(LED::RED_LED);
+  ESP_RETURN_ON_ERROR(
+    big_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, big_button_isr, nullptr), 
+    "SYS_INIT", "Failed to set interrupt for boot button."
+  ); 
+  logger.info("Enabled Big Button"); 
 
   // create i2c instance
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
@@ -770,7 +805,7 @@ esp_err_t initSystem() {
 
   // init flash
   ESP_RETURN_ON_ERROR(spi_flash.init(), "SYS_INIT", "Failed to initialize SPI flash.");
-  ESP_RETURN_ON_ERROR(flash_log.init(), "SYS_INIT", "Failed to initialize flash log.");
+  ESP_RETURN_ON_ERROR(flash_log.init(0), "SYS_INIT", "Failed to initialize flash log.");
 
   // init imu queue
   // imuQueue = xQueueCreate(IMU_QUEUE_SIZE, sizeof(quat_sample_t));
@@ -818,8 +853,7 @@ esp_err_t initSystem() {
   //   logger.error("Failed to create haptic queue");
   // }
 
-  // turn on led to indicate successful init
-  red_led.turn_on();
+  green_led.turn_on(); 
 
   return ESP_OK;
 }
