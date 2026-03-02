@@ -1,5 +1,8 @@
-/* GPIO.cpp
- *  - wrappers for esp-idf i2c functions
+/**
+ * @brief GPIO.cpp - Implementation of GPIO wrapper.
+ *
+ * Provides the method definitions for the `Common::GPIO` class, handling pin
+ * configuration, level control, and interrupt management using ESP‑IDF APIs.
  */
 
 #include "GPIO.hpp"

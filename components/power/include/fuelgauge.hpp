@@ -1,6 +1,10 @@
-/*
- * fuelgauge.hpp
- *  - simple drive for MAX1704X L-ion fuel gauge adapted from Adafruit Arduino cpp library
+/**
+ * @file fuelgauge.hpp
+ * @ingroup power
+ * @brief Driver for MAX1704X Li‑ion fuel gauge.
+ *
+ * Provides read‑only access to cell voltage, state‑of‑charge, and charge rate.
+ * Adapted from the Adafruit Arduino library to use the `espp::I2c` abstraction.
  */
 
 #pragma once

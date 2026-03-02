@@ -37,18 +37,28 @@
 //  Hardware Pin Definitions
 // ---------------------------------------------------------------------
 
-// I2C pins
+/** @brief I2C port number used for communication. */
 constexpr i2c_port_t i2c_port{I2C_NUM_0};
+
+/** @brief GPIO number for I2C SDA line. */
 constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
+
+/** @brief GPIO number for I2C SCL line. */
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 
-// fsr pin
+/** @brief ADC channel for force-sensitive resistor pressure sensor. */
 constexpr adc_channel_t fsr_pin{ADC_CHANNEL_4};
 
-// SPI2 pins (for flash storage)
+/** @brief GPIO number for SPI2 SCK (clock) line used for flash storage. */
 static constexpr auto spi2_sck{GPIO_NUM_12};
+
+/** @brief GPIO number for SPI2 MOSI (master out) line used for flash storage. */
 static constexpr auto spi2_mosi{GPIO_NUM_11};
+
+/** @brief GPIO number for SPI2 MISO (master in) line used for flash storage. */
 static constexpr auto spi2_miso{GPIO_NUM_13};
+
+/** @brief GPIO number for flash chip select (CS) line. */
 static constexpr auto flash_spi_cs{GPIO_NUM_10};
 // ---------------------------------------------------------------------
 //  Global Objects
@@ -95,50 +105,58 @@ Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPI
 // Constants
 // ---------------------------------------------------------------------
 
-// button polling and long-press detection
+/** @brief Polling interval for button state (ms). */
 static constexpr uint32_t BUTTON_POLL_MS{20};
+
+/** @brief Debounce time for button press (ms). */
 static constexpr uint32_t BUTTON_DEBOUNCE_MS{50};
+
+/** @brief Duration for detecting a long press (ms). */
 static constexpr uint32_t LONG_PRESS_MS{3000};
 
-// force sensor calibration value defaults
+/** @brief Minimum calibrated force sensor value (raw ADC units). */
 static constexpr float FSR_LOW{0.00f};
+
+/** @brief Maximum calibrated force sensor value (raw ADC units). */
 static constexpr float FSR_HIGH{2893.5f};
 
-// fsr task polling interval
+/** @brief Polling interval for force sensor task (ms). */
 static constexpr uint32_t FSR_POLL_INTERVAL_MS{50};
 
-// rtp haptic intensity when threshold exceeded (0-255)
+/** @brief RTP intensity value (0-255) for haptic feedback when threshold exceeded. */
 static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{255};
 
-// calibration phase delay (time for user to prepare)
+/** @brief Delay before calibration phase starts (ms). */
 static constexpr uint32_t CAL_PHASE_DELAY_MS{3000};
 
-// threshold as percentage of calibrated range
+/** @brief Threshold percentage of calibrated range to trigger events. */
 static constexpr float FSR_THRESHOLD_PERCENT{0.7f};
 
-// queue size for imu samples
+/** @brief Queue size for IMU samples. */
 static constexpr uint8_t IMU_QUEUE_SIZE{64};
 
-// number of samples to batch for flash writes
+/** @brief Number of samples to batch for flash writes. */
 static constexpr uint8_t FLASH_BATCH_SIZE{14};
 
-// number of samples to send over ble
+/** @brief Number of samples to send over BLE. */
 static constexpr uint8_t NUM_SAMPlES_BLE{24};
 
-// upload task timing
+/** @brief Retry delay for upload task after failure (ms). */
 static constexpr uint32_t UPLOAD_RETRY_DELAY_MS{100};
-static constexpr int64_t UPLOAD_ACK_TIMEOUT_US{5'000'000}; // 5 seconds
 
-// battery task timing
-static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{30'000}; // 30 seconds
+/** @brief Timeout for upload acknowledgment (microseconds). */
+static constexpr int64_t UPLOAD_ACK_TIMEOUT_US{5'000'000};
 
-// imu frequency
+/** @brief Interval for battery status updates (ms). */
+static constexpr uint32_t BATTERY_UPDATE_INTERVAL_MS{30'000};
+
+/** @brief IMU sampling frequency (Hz). */
 static constexpr float IMU_FREQ{100};
 
-// length of event queue
+/** @brief Length of event queue (number of entries). */
 static constexpr uint8_t EVENT_QUEUE_LENGTH{8};
 
-// haptic queue length - small, events are low-frequency
+/** @brief Length of haptic event queue (number of entries). */
 static constexpr uint8_t HAPTIC_QUEUE_LENGTH{4};
 
 /*! @brief Haptic event identifiers for the DRV2605L driver.

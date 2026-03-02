@@ -1,8 +1,11 @@
-/*
- * haptic_motor.hpp
- *  - DRV2605L Haptic Motor Driver for ESP32
- *  - Adapted from SparkFun DRV2605L Arduino Library by Mary West
- *  - Modified to use espp::I2c for ESP32-S3
+/**
+ * @file haptic_motor.hpp
+ * @ingroup feedback
+ * @brief DRV2605L haptic motor driver interface.
+ *
+ * Provides a C++ wrapper around the DRV2605L haptic driver IC, using the
+ * `espp::I2c` class for I²C communication on the ESP32‑S3. Supports mode
+ * configuration, waveform sequencing, real‑time playback, and diagnostic reads.
  */
 
 #pragma once
@@ -11,8 +14,21 @@
 
 namespace HAPTICS {
 
+/**
+ * @brief Driver class for the DRV2605L haptic motor controller.
+ *
+ * Manages initialization, mode selection, waveform programming, and real‑time
+ * playback via I²C. All register accesses are abstracted through private helper
+ * methods. The driver does not perform any task‑level synchronization; callers
+ * must ensure exclusive access if used from multiple FreeRTOS tasks.
+ */
 class DRV2605L {
 public:
+  /**
+   * @brief Operational mode of the DRV2605L.
++   *
++   * Determines how the device triggers vibration effects.
++   */
   enum class Mode : uint8_t {
     INTERNAL_TRIGGER = 0x00,
     EXTERNAL_TRIGGER_EDGE = 0x01,
@@ -24,11 +40,22 @@ public:
     AUTO_CALIBRATION = 0x07
   };
 
+  /**
+   * @brief Motor type selection.
++   *
++   * ERM: Eccentric rotating mass motor.
++   * LRA: Linear resonant actuator.
++   */
   enum class MotorType : uint8_t {
     ERM = 0x39, // ERM Mode, 4x Brake factor, Medium Gain, 1.365x Back EMF
     LRA = 0xB9  // LRA MODE, 4X Brake Factor, Medium Gain, 7.5x Back EMF
   };
 
+  /**
+   * @brief Waveform library selection.
++   *
++   * The DRV2605L ships with built‑in ROM libraries for various motor types.
++   */
   enum class Library : uint8_t {
     EMPTY = 0x00,
     ERM_LIB_A = 0x01,
@@ -39,6 +66,11 @@ public:
     LRA_LIB = 0x06
   };
 
+  /**
+   * @brief Register map for the DRV2605L.
++   *
++   * Each entry corresponds to a register address as defined in the datasheet.
++   */
   enum REGISTERS : uint8_t {
     STATUS = 0x00,
     MODE = 0x01,
@@ -78,6 +110,12 @@ public:
   };
 
   // Effect IDs from the DRV2605L ROM library (ERM Library A/B/C, see datasheet Table 11)
+  /**
+   * @brief Effect IDs from the DRV2605L ROM library.
++   *
++   * Values correspond to predefined waveforms; see the DRV2605L datasheet Table
++   * 11 for the mapping.
++   */
   enum EFFECTS : uint8_t {
     // Clicks
     SINGLE_CLICK         = 1,
@@ -120,19 +158,67 @@ public:
    *
    * @return true on success, false if the I2C write failed
    */
+  /**
+   * @brief Program the sequencer with up to 8 effects and start playback.
++   *
++   * @param effects Pointer to an array of effect IDs (from `EFFECTS`).
++   * @param count Number of effects in the array (max 8). The array should be
++   *              terminated with `EFFECTS::END` or exactly `count` entries.
++   * @return true on successful I²C write, false on failure.
++   */
   bool play(const uint8_t *effects, uint8_t count);
 
   static constexpr uint8_t DEFAULT_ADDRESS{0x5A};
   static constexpr uint8_t EXPECTED_STATUS{0xE0};
 
+  /**
+   * @brief Construct a driver instance.
++   *
++   * @param i2c Reference to an initialized `espp::I2c` object.
++   * @param address I²C address of the DRV2605L (default 0x5A).
++   */
   explicit DRV2605L(espp::I2c &i2c, uint8_t address = DEFAULT_ADDRESS);
 
+  /**
+   * @brief Initialize the DRV2605L device.
++   *
++   * Checks the status register; if the device is present and not in error, it
++   * configures default mode, motor type, and library.
++   * @return true on successful initialization, false otherwise.
++   */
   bool init();
+  /**
+   * @brief Query whether the device is ready for operation.
++   *
++   * Reads the status register and verifies that the device ID matches and no
++   * error bits are set.
++   * @return true if ready, false otherwise.
++   */
   bool is_device_ready();
+  /**
+   * @brief Read the status register.
++   *
++   * @return Raw status byte.
++   */
   uint8_t get_status();
 
+  /**
+   * @brief Set the operation mode of the driver.
++   *
++   * @param mode Desired mode from the `Mode` enum.
++   */
   void set_mode(Mode mode);
+  /**
+   * @brief Select the motor type (ERM or LRA).
++   *
++   * @param motor Motor type enum value.
++   */
   void select_motor(MotorType motor);
+  /**
+   * @brief Select the waveform library.
++   *
++   * @param lib Library enum value.
++   */
   void select_library(Library lib);
   void set_waveform(uint8_t sequencer, uint8_t waveform);
   bool go();

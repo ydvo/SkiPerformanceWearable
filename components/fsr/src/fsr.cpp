@@ -1,5 +1,8 @@
-/* fsr.cpp
- *  implementation of simple force sensitice resistor driver
+/**
+ * @file fsr.cpp - Implementation of the FSR driver.
+ *
+ * Implements voltage reading, raw ADC conversion, calibration, and pressure
+ * threshold handling using the ESP‑IDF oneshot ADC.
  */
 
 #include "fsr.hpp"

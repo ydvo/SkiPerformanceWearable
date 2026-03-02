@@ -1,5 +1,10 @@
-/* led.hpp
- *  simple driver for leds
+/**
+ * @file led.hpp
+ * @ingroup feedback
+ * @brief Simple LED driver.
+ *
+ * Provides a lightweight wrapper around a GPIO pin for turning an LED on or
+ * off. Uses the `Common::GPIO` class for low‑level pin control.
  */
 #pragma once
 #include "GPIO.hpp"

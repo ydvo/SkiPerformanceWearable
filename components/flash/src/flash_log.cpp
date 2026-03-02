@@ -1,3 +1,9 @@
+/**
+ * @file flash_log.cpp - Implementation of templated flash log.
+ *
+ * Defines the `FlashLog<T>` member functions for managing buffered writes,
+ * frame construction, CRC computation, and reading with validation.
+ */
 #include "flash_log.hpp"
 #include "esp_crc.h"
 #include "esp_log.h"

@@ -1,5 +1,11 @@
-/* fsr.hpp
- *  simple driver for force resistive sensor. basically a wrapper of the adc
+/**
+ * @file fsr.hpp
+ * @ingroup sensors
+ * @brief Force‑sensitive resistor (FSR) driver.
+ *
+ * Provides a thin wrapper around the ESP‑IDF oneshot ADC driver to read a
+ * resistive pressure sensor. Handles calibration of baseline (no pressure) and
+ * maximum pressure, threshold detection, and conversion to a percentage.
  */
 #pragma once
 #include "adc_types.hpp"
@@ -10,6 +16,15 @@ namespace SENSORS {
 
 /* Constants */
 
+/**
+ * @brief Simple FSR driver.
+ *
+ * Wraps an ESP‑IDF oneshot ADC to read voltage from a force‑sensitive
+ * resistor. Calibration methods compute baseline and maximum voltages; a
+ * configurable pressure threshold enables `is_pressed()` detection. The class is
+ * intended for use from a single FreeRTOS task; concurrent access requires
+ * external synchronization.
+ */
 class fsr {
 
 public:
@@ -18,12 +33,23 @@ public:
    * @param channel The ADC channel the FSR is connected to
    */
   fsr(adc_channel_t channel);
+  /**
+   * @brief Destructor; releases any allocated resources.
++   *
++   * Currently no dynamic resources are allocated, but the destructor is
++   * provided for completeness and future extensions.
++   */
   ~fsr();
 
   /**
    * @brief Read the raw ADC value
    * @return Raw ADC value (0-4095 for 12-bit ADC)
    */
+  /**
+   * @brief Read the raw ADC code (units of LSB).
++   *
++   * @return Raw ADC value (e.g., 0‑4095 for a 12‑bit ADC). Returns 0 on error.
++   */
   int read_raw();
 
   /**
@@ -60,6 +86,14 @@ public:
    * @param threshold_mv Threshold to check against in mV
    * @return true if current reading >= threshold, false otherwise
    */
+  /**
+   * @brief Test the current pressure against a specified threshold.
++   *
++   * Reads the current voltage and compares it to `threshold_mv`.
++   *
++   * @param threshold_mv Threshold voltage in millivolts.
++   * @return true if the measured voltage >= threshold_mv, false otherwise.
++   */
   bool check_pressure(float threshold_mv);
 
   /**
@@ -105,11 +139,11 @@ public:
   float read_percentage();
 
 private:
-  std::vector<espp::AdcConfig> channels_; // channels to read from
-  espp::OneshotAdc adc_;                  // ADC instance
-  float pressure_threshold_;              // pressure threshold in mV
-  bool is_pressed_;                       // flag indicating if pressed
-  float baseline_mv_;                     // baseline voltage (no pressure)
-  float max_mv_;                          // max voltage (full pressure)
+  std::vector<espp::AdcConfig> channels_; ///< ADC channel configuration vector.
+  espp::OneshotAdc adc_;                  ///< Oneshot ADC instance used for reads.
+  float pressure_threshold_;              ///< Pressure threshold in millivolts; 0 disables detection.
+  bool is_pressed_;                       ///< Cached flag set when last reading exceeded the threshold.
+  float baseline_mv_;                     ///< Calibrated baseline voltage (no pressure) in mV.
+  float max_mv_;                          ///< Calibrated maximum voltage (full pressure) in mV.
 };
 } // namespace SENSORS

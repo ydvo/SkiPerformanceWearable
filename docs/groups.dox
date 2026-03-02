@@ -1,0 +1,44 @@
+/**
+ * @defgroup components Components
+ * @brief Hardware driver components for the ski performance wearable.
+ *
+ * Each component wraps a specific peripheral or subsystem: IMU, BLE,
+ * flash storage, force-sensitive resistor, haptic motor, LED, rotary
+ * encoder, GPIO utility, and power/fuel-gauge monitoring.
+ */
+
+/**
+ * @defgroup sensors Sensors
+ * @ingroup components
+ * @brief Sensor drivers (IMU, FSR, rotary encoder).
+ */
+
+/**
+ * @defgroup storage Storage
+ * @ingroup components
+ * @brief SPI flash device and flash log.
+ */
+
+/**
+ * @defgroup communication Communication
+ * @ingroup components
+ * @brief BLE GATT server for data upload.
+ */
+
+/**
+ * @defgroup feedback Feedback
+ * @ingroup components
+ * @brief Haptic motor and LED output drivers.
+ */
+
+/**
+ * @defgroup power Power
+ * @ingroup components
+ * @brief Battery fuel gauge and power statistics.
+ */
+
+/**
+ * @defgroup utilities Utilities
+ * @ingroup components
+ * @brief GPIO wrapper and common helpers.
+ */
