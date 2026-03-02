@@ -95,11 +95,14 @@ SENSORS::fsr pressure_sensor(fsr_pin);
 // Haptics
 HAPTICS::DRV2605L haptic(i2c);
 
+// Initialize LED
+LED::led green_led = LED::led(LED::GREEN_LED);
+
 // BLE Module
 BLE::BleModule ble;
 
-Common::GPIO boot_button(GPIO_NUM_0, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
-                         Common::GPIO::PULLUP);
+Common::GPIO big_button(GPIO_NUM_6, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
+                         Common::GPIO::PULLUP); 
 
 // ---------------------------------------------------------------------
 // Constants
@@ -224,7 +227,6 @@ static TaskHandle_t upload_task_handle = nullptr;
 static TaskHandle_t battery_task_handle = nullptr;
 static TaskHandle_t haptic_task_handle = nullptr;
 static TaskHandle_t fsr_task_handle = nullptr;
-static TaskHandle_t button_task_handle = nullptr;
 static TaskHandle_t calibration_task_handle = nullptr;
 
 // queue for imu data
@@ -655,55 +657,6 @@ void fsrTask(void *arg) {
   }
 }
 
-// Poll boot button for short press (toggle run) and long press (calibration)
-/*! 
- * @brief FreeRTOS task that debounces the boot button and generates events.
- *
- * The task samples the button at `BUTTON_POLL_MS` intervals. Short presses
- * toggle the RUN state; long presses (>= `LONG_PRESS_MS`) trigger the
- * calibration sequence. Events are posted to `eventQueue`.
- *
- * @param arg Unused task argument.
- */
-void buttonTask(void *arg) {
-  bool was_pressed = false;
-  TickType_t press_start = 0;
-  bool long_press_fired = false;
-
-  for (;;) {
-    bool pressed = !boot_button.getLevel(); // active low with pullup
-
-    if (pressed && !was_pressed) {
-      // Button just pressed -- record start time
-      press_start = xTaskGetTickCount();
-      long_press_fired = false;
-
-    } else if (pressed && was_pressed && !long_press_fired) {
-      // Button held -- check if long press threshold reached
-      uint32_t held_ms = (xTaskGetTickCount() - press_start) * portTICK_PERIOD_MS;
-      if (held_ms >= LONG_PRESS_MS) {
-        Event e = Event::START_CALIBRATION;
-        xQueueSend(eventQueue, &e, 0);
-        long_press_fired = true;
-      }
-
-    } else if (!pressed && was_pressed) {
-      // Button released
-      if (!long_press_fired) {
-        uint32_t held_ms = (xTaskGetTickCount() - press_start) * portTICK_PERIOD_MS;
-        if (held_ms >= BUTTON_DEBOUNCE_MS) {
-          // Short press -- toggle run
-          Event e = Event::TOGGLE_RUN;
-          xQueueSend(eventQueue, &e, 0);
-        }
-      }
-    }
-
-    was_pressed = pressed;
-    vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
-  }
-}
-
 // Run FSR calibration sequence guided by haptic feedback
 /*! 
  * @brief FreeRTOS task that guides the user through FSR calibration.
@@ -1041,9 +994,6 @@ esp_err_t initSystem() {
       Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
   logger.info("Enabled QT Stemma Port");
 
-  // Initialize LED
-  LED::led red_led = LED::led(LED::RED_LED);
-
   // create i2c instance
   logger.info("Creating I2C on port {} with SDA {} and SCL {}", i2c_port, i2c_sda, i2c_scl);
   std::error_code ec;
@@ -1120,6 +1070,35 @@ esp_err_t initSystem() {
     logger.info("BLE: Client authenticated\n");
   };
 
+  // BLE control characteristic callback – 0x01 toggles recording, 0x02 toggles calibration
+  ble_config.on_control_command = [](uint8_t cmd) {
+    Event e; 
+    BaseType_t status; 
+
+    switch (cmd) {
+    case 0x01:
+      e = Event::TOGGLE_RUN;
+      status = xQueueSend(eventQueue, &e, 0);
+      if (status != pdTRUE) {
+        logger.warn("BLE control: TOGGLE_RUN event dropped (queue full)");
+      } else {
+        logger.info("BLE control: TOGGLE_RUN enqueued");
+      }
+      break; 
+    case 0x02:
+      e = Event::START_CALIBRATION; 
+      status = xQueueSend(eventQueue, &e, 0); 
+      if (status != pdTRUE) {
+        logger.warn("BLE control: START_CALIBRATION event dropped (queue full)"); 
+      } else {
+        logger.info("BLE control: START_CALIBRATION enqueued"); 
+      }
+      break;
+    default: 
+      logger.warn("BLE control: unknown command 0x{:02x}", (unsigned)cmd);
+    }
+  };
+
   // Create and initialize BLE module
   ble.reconfigure(ble_config);
   ESP_RETURN_ON_ERROR(ble.init(), "SYS_INIT", "Failed to initialize BLE module");
@@ -1145,7 +1124,7 @@ esp_err_t initSystem() {
   }
 
   // turn on led to indicate successful init
-  red_led.turn_on();
+  green_led.turn_on();
 
   return ESP_OK;
 }
@@ -1199,9 +1178,6 @@ extern "C" void app_main() {
 
   // Create a task that monitors FSR and triggers haptic warning
   xTaskCreate(fsrTask, "fsr_task", 4096, NULL, 5, &fsr_task_handle);
-
-  // Create a task that polls the boot button for short/long press
-  xTaskCreate(buttonTask, "button", 2048, NULL, 7, &button_task_handle);
 
   // Create a task that runs the FSR calibration sequence
   xTaskCreate(calibrationTask, "calibrate", 4096, NULL, 5, &calibration_task_handle);

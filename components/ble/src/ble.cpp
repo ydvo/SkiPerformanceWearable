@@ -9,6 +9,7 @@ static const char *TAG = "BLE";
 static const NimBLEUUID QUAT_SVC_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f700"};
 static const NimBLEUUID QUAT_CHAR_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f701"};
 static const NimBLEUUID QUAT_ACK_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f702"};
+static const NimBLEUUID QUAT_CTRL_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f703"};
 
 BleModule::BleModule() : config_(), battery_level_(100), initialized_(false) {}
 
@@ -299,6 +300,25 @@ esp_err_t BleModule::init_quat_service() {
   ackUserDescriptor->setValue("Acknowledgement (WRITE Ack struct with frame_seq)");
   ESP_LOGI(TAG, "ACK User Description set");
 
+  ESP_LOGI(TAG, "Creating control characteristic");
+  ctrl_char_ = svc->createCharacteristic(QUAT_CTRL_UUID,
+                                         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+
+  ESP_RETURN_ON_FALSE(ctrl_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create control characteristic");
+
+  ctrl_char_->setCallbacks(&ctrl_cb_);
+  ESP_LOGI(TAG, "Control characteristic created");
+
+  NimBLEDescriptor *ctrlUserDescriptor =
+      ctrl_char_->createDescriptor(NimBLEUUID((uint16_t)0x2901), NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(ctrlUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create control user descriptor");
+
+  ctrlUserDescriptor->setValue("Control (WRITE: 0x01=toggle recording)");
+  ESP_LOGI(TAG, "Control User Description set");
+
   ESP_LOGI(TAG, "Starting service");
   svc->start();
   ESP_LOGI(TAG, "Quaternion service started");
@@ -436,6 +456,33 @@ void BleModule::AckCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic,
   parent_->ack_armed_.store(false, std::memory_order_relaxed);
   parent_->ack_received_.store(true, std::memory_order_release);
   ESP_LOGI(TAG, "ACK onWrite: ACK seq=%u accepted", (unsigned)ack.frame_seq);
+}
+
+/* ----------------------------------------------------------------
+ *  Control write callback – central sends recording commands
+ * ---------------------------------------------------------------- */
+void BleModule::ControlCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic,
+                                              NimBLEConnInfo &connInfo) {
+  ESP_RETURN_VOID_ON_FALSE(pCharacteristic != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                           "Failed control onWrite due to null characteristic");
+
+  ESP_RETURN_VOID_ON_FALSE(parent_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                           "Failed control onWrite due to null parent");
+
+  std::string raw = pCharacteristic->getValue();
+  if (raw.empty()) {
+    ESP_LOGW(TAG, "Control onWrite: empty payload – ignoring");
+    return;
+  }
+
+  uint8_t cmd = static_cast<uint8_t>(raw[0]);
+  ESP_LOGI(TAG, "Control onWrite: cmd=0x%02x", (unsigned)cmd);
+
+  if (parent_->config_.on_control_command) {
+    parent_->config_.on_control_command(cmd);
+  } else {
+    ESP_LOGW(TAG, "Control onWrite: no handler registered");
+  }
 }
 
 } // namespace BLE

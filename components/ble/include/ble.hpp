@@ -125,6 +125,13 @@ public:
      std::function<void(NimBLEConnInfo &)> on_connect;          ///< Invoked on BLE connection.
      std::function<void(NimBLEConnInfo &, espp::BleGattServer::DisconnectReason)> on_disconnect; ///< Invoked on BLE disconnection.
      std::function<void(const NimBLEConnInfo &)> on_authenticated; ///< Invoked after authentication.
+     /**
+      * @brief Invoked when the central writes to the control characteristic.
+      *
+      * The argument is the command byte received:
+      *   - 0x01 : toggle recording (start if idle, stop if running)
+      */
+     std::function<void(uint8_t cmd)> on_control_command;      ///< Invoked on control characteristic write.
    };
 
   /**
@@ -266,11 +273,21 @@ private:
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
   };
 
+  class ControlCharCallbacks : public NimBLECharacteristicCallbacks {
+    BleModule *parent_;
+
+  public:
+    explicit ControlCharCallbacks(BleModule *parent) : parent_(parent) {};
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
+  };
+
   NimBLECharacteristic *quat_char_ = nullptr;
   NimBLECharacteristic *ack_char_ = nullptr;
+  NimBLECharacteristic *ctrl_char_ = nullptr;
 
   QuatCCCDCallbacks quat_cccd_cb_{this};
   AckCharCallbacks quat_ack_cb_{this};
+  ControlCharCallbacks ctrl_cb_{this};
 
   std::atomic<bool> quat_notifications_enabled_{false};
 
