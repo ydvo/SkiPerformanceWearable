@@ -47,7 +47,7 @@ constexpr gpio_num_t i2c_sda{GPIO_NUM_3};
 constexpr gpio_num_t i2c_scl{GPIO_NUM_4};
 
 /** @brief ADC channel for force-sensitive resistor pressure sensor. */
-constexpr adc_channel_t fsr_pin{ADC_CHANNEL_4};
+constexpr adc_channel_t fsr_pin{ADC_CHANNEL_7};
 
 /** @brief GPIO number for SPI2 SCK (clock) line used for flash storage. */
 static constexpr auto spi2_sck{GPIO_NUM_12};
@@ -102,7 +102,7 @@ LED::led green_led = LED::led(LED::GREEN_LED);
 BLE::BleModule ble;
 
 Common::GPIO big_button(GPIO_NUM_6, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
-                         Common::GPIO::PULLUP); 
+                        Common::GPIO::PULLUP);
 
 // ---------------------------------------------------------------------
 // Constants
@@ -228,7 +228,7 @@ static TaskHandle_t battery_task_handle = nullptr;
 static TaskHandle_t haptic_task_handle = nullptr;
 static TaskHandle_t fsr_task_handle = nullptr;
 static TaskHandle_t calibration_task_handle = nullptr;
-static TaskHandle_t led_task_handle = nullptr; 
+static TaskHandle_t led_task_handle = nullptr;
 
 // queue for imu data
 static QueueHandle_t imuQueue = nullptr;
@@ -260,7 +260,7 @@ struct quat_sample_t {
 };
 
 // Capture sensor data and push to queue
-/*! 
+/*!
  * @brief FreeRTOS task that reads IMU samples at IMU_FREQ and enqueues them.
  *
  * The task blocks on the RUNNING state event group, timestamps each sample
@@ -304,7 +304,7 @@ void imuTask(void *arg) {
 }
 
 // Batch read from queue and write to flash
-/*! 
+/*!
  * @brief FreeRTOS task that dequeues IMU samples and writes them to flash.
  *
  * While the system is in RUNNING state it blocks on `imuQueue` for the first
@@ -353,7 +353,7 @@ enum class UploadState : uint8_t {
 };
 
 // Read stored samples from flash and send over BLE
-/*! 
+/*!
  * @brief FreeRTOS task that streams flash‑stored IMU data over BLE.
  *
  * The task reads frames from `flash_log`, builds BLE frames and notifies the
@@ -366,9 +366,9 @@ enum class UploadState : uint8_t {
 void uploadTask(void *arg) {
   uint32_t total_frames_sent = 0;
   uint32_t total_ack_timeouts = 0;
-  static STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame; 
+  static STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame;
   static BLE::Frame ble_frame{
-        .header = {.frame_seq = 0, .sample_count = 0, .payload_len = 0, .flags = 0}, .payload = {}};
+      .header = {.frame_seq = 0, .sample_count = 0, .payload_len = 0, .flags = 0}, .payload = {}};
 
   for (;;) {
     xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
@@ -388,12 +388,14 @@ void uploadTask(void *arg) {
     while (true) {
       EventBits_t bits = xEventGroupGetBits(system_state);
       bool still_running = bits & static_cast<EventBits_t>(SystemState::RUNNING);
-      bool in_ready     = bits & static_cast<EventBits_t>(SystemState::READY);
+      bool in_ready = bits & static_cast<EventBits_t>(SystemState::READY);
 
       // Exit once drain notification has been sent (or there was nothing to drain)
-      if (drain_notified) break;
+      if (drain_notified)
+        break;
       // Exit if the system left RUNNING/READY (e.g. BLE disconnected → IDLE)
-      if (!still_running && !in_ready) break;
+      if (!still_running && !in_ready)
+        break;
 
       switch (upload_state) {
       case UploadState::BUFFER_FLASH_FRAME: {
@@ -594,7 +596,7 @@ static const HapticSequence haptic_sequences[] = {
 } // namespace
 
 // Dequeue HapticEvents and play the corresponding effect sequence
-/*! 
+/*!
  * @brief FreeRTOS task that processes queued HapticEvent values.
  *
  * The task blocks on `hapticQueue`, looks up the corresponding effect
@@ -637,7 +639,7 @@ void hapticTask(void *arg) {
 }
 
 // Monitor FSR pressure and drive haptic motor in realtime when threshold exceeded
-/*! 
+/*!
  * @brief FreeRTOS task that monitors the force‑sensitive resistor.
  *
  * While the system is RUNNING the task reads the sensor voltage and checks
@@ -687,7 +689,7 @@ void fsrTask(void *arg) {
 }
 
 // Run FSR calibration sequence guided by haptic feedback
-/*! 
+/*!
  * @brief FreeRTOS task that guides the user through FSR calibration.
  *
  * The task runs when the system enters the CALIBRATING state. It uses haptic
@@ -735,7 +737,7 @@ void calibrationTask(void *arg) {
 }
 
 // Periodically read fuel gauge and push battery level to BLE battery service
-/*! 
+/*!
  * @brief FreeRTOS task that periodically reads the MAX1704X fuel gauge.
  *
  * When BLE is connected the task publishes the battery level (percentage)
@@ -761,50 +763,50 @@ void batteryTask(void *arg) {
   }
 }
 
-uint8_t LED_LOW_FREQ { 1 }; // 1 Hz frequency -> period is 2 seconds
-uint8_t LED_MID_FREQ { 2 }; // 2 Hz frequency -> period is 1 seconds
-uint8_t LED_HIGH_FREQ { 10 }; // 10 Hz frequency -> period is 0.2 seconds
+uint8_t LED_LOW_FREQ{1};   // 1 Hz frequency -> period is 2 seconds
+uint8_t LED_MID_FREQ{2};   // 2 Hz frequency -> period is 1 seconds
+uint8_t LED_HIGH_FREQ{10}; // 10 Hz frequency -> period is 0.2 seconds
 
 void ledTask(void *arg) {
-  static SystemState currstate; 
+  static SystemState currstate;
 
   for (;;) {
     currstate = static_cast<SystemState>(xEventGroupGetBits(system_state));
-    
+
     switch (currstate) {
-    case SystemState::SLEEP: 
+    case SystemState::SLEEP:
       // Turn off led when device is asleep
-      green_led.turn_off(); 
-      vTaskDelay(pdMS_TO_TICKS(1000)); 
-      break; 
-    case SystemState::IDLE: 
+      green_led.turn_off();
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      break;
+    case SystemState::IDLE:
       // Not connected, flash periodically with medium frequency
-      green_led.toggle(); 
-      vTaskDelay(pdMS_TO_TICKS(1000/LED_MID_FREQ)); 
-      break; 
-    case SystemState::READY: 
+      green_led.toggle();
+      vTaskDelay(pdMS_TO_TICKS(1000 / LED_MID_FREQ));
+      break;
+    case SystemState::READY:
       // Connected, led stays on
-      green_led.turn_on(); 
-      vTaskDelay(pdMS_TO_TICKS(1000)); 
-      break; 
-    case SystemState::RUNNING: 
+      green_led.turn_on();
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      break;
+    case SystemState::RUNNING:
       // Session running, flash periodically with low frequency
-      green_led.toggle(); 
-      vTaskDelay(pdMS_TO_TICKS(1000/LED_LOW_FREQ)); 
-      break; 
+      green_led.toggle();
+      vTaskDelay(pdMS_TO_TICKS(1000 / LED_LOW_FREQ));
+      break;
     case SystemState::ERROR:
       // Error state, turn off led
-      green_led.turn_off(); 
-      vTaskDelay(pdMS_TO_TICKS(1000)); 
+      green_led.turn_off();
+      vTaskDelay(pdMS_TO_TICKS(1000));
       break;
     case SystemState::CALIBRATING:
       // Device calibrating, flash periodically with high frequency
-      green_led.toggle(); 
-      vTaskDelay(pdMS_TO_TICKS(1000/LED_HIGH_FREQ)); 
-      break; 
+      green_led.toggle();
+      vTaskDelay(pdMS_TO_TICKS(1000 / LED_HIGH_FREQ));
+      break;
     default:
-      vTaskDelay(pdMS_TO_TICKS(1000)); 
-      break; 
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      break;
     }
   }
 }
@@ -813,7 +815,7 @@ void ledTask(void *arg) {
 // ---------------------------------------------------------------------
 
 // idle mode callback to sleep everything and start ble_advertising
-/*! 
+/*!
  * @brief Starts BLE advertising and logs the device name.
  *
  * Intended to be called when the system enters the SLEEP or IDLE state.
@@ -838,7 +840,7 @@ esp_err_t advertiseBLE() {
   return ESP_OK;
 }
 
-/*! 
+/*!
  * @brief Placeholder for waking up sensors (IMU, FSR) and starting haptics.
  *
  * Currently a stub; future implementation should power up peripherals and
@@ -857,7 +859,7 @@ esp_err_t startSensors() {
 }
 
 // helper to transition states
-/*! 
+/*!
  * @brief Helper that atomically updates the system state event group.
  *
  * Sets bits for `nextstate` and clears bits for `currstate`. Also logs the
@@ -903,7 +905,7 @@ static void switch_states(SystemState currstate, SystemState nextstate) {
 
 // state machine
 //  - transitions on Events
-/*! 
+/*!
  * @brief FreeRTOS task implementing the system state machine.
  *
  * Waits for `Event` messages on `eventQueue` and transitions between
@@ -1013,7 +1015,7 @@ void controlTask(void *arg) {
 // ---------------------------------------------------------------------
 
 // callbacks to change system state on connection status
-/*! 
+/*!
  * @brief BLE connection callback.
  *
  * Enqueues `Event::BLE_CONNECTED` to the control task's event queue. Logs a
@@ -1031,7 +1033,7 @@ void on_ble_connect(NimBLEConnInfo &info) {
   logger.info("BLE: Client connected \n");
 }
 
-/*! 
+/*!
  * @brief BLE disconnection callback.
  *
  * Enqueues `Event::BLE_DISCONNECTED` to the control task's event queue. Logs a
@@ -1054,7 +1056,7 @@ void on_ble_disconnect(NimBLEConnInfo &info, espp::BleGattServer::DisconnectReas
 //  System Initialization
 // ---------------------------------------------------------------------
 
-/*! 
+/*!
  * @brief Performs application-wide initialization of peripherals and components.
  *
  * Sets up I2C, IMU, fuel gauge, force sensor, haptic driver, SPI flash, BLE,
@@ -1086,7 +1088,7 @@ esp_err_t initSystem() {
     logger.info("Imu initialized");
   } else {
     logger.error("Failed to initialize imu");
-    return ESP_ERR_INVALID_STATE; // sometimes errors but works fine
+    // return ESP_ERR_INVALID_STATE; // sometimes errors but works fine
   }
 
   // check if battery is connected
@@ -1104,7 +1106,7 @@ esp_err_t initSystem() {
   // Haptic setup
   if (!haptic.init()) {
     logger.error("Could not initialize haptics");
-    return ESP_ERR_INVALID_STATE;
+    // return ESP_ERR_INVALID_STATE;
   }
 
   // initialize spi
@@ -1148,8 +1150,8 @@ esp_err_t initSystem() {
 
   // BLE control characteristic callback – 0x01 toggles recording, 0x02 toggles calibration
   ble_config.on_control_command = [](uint8_t cmd) {
-    Event e; 
-    BaseType_t status; 
+    Event e;
+    BaseType_t status;
 
     switch (cmd) {
     case 0x01:
@@ -1160,17 +1162,17 @@ esp_err_t initSystem() {
       } else {
         logger.info("BLE control: TOGGLE_RUN enqueued");
       }
-      break; 
+      break;
     case 0x02:
-      e = Event::START_CALIBRATION; 
-      status = xQueueSend(eventQueue, &e, 0); 
+      e = Event::START_CALIBRATION;
+      status = xQueueSend(eventQueue, &e, 0);
       if (status != pdTRUE) {
-        logger.warn("BLE control: START_CALIBRATION event dropped (queue full)"); 
+        logger.warn("BLE control: START_CALIBRATION event dropped (queue full)");
       } else {
-        logger.info("BLE control: START_CALIBRATION enqueued"); 
+        logger.info("BLE control: START_CALIBRATION enqueued");
       }
       break;
-    default: 
+    default:
       logger.warn("BLE control: unknown command 0x{:02x}", (unsigned)cmd);
     }
   };
@@ -1209,7 +1211,7 @@ esp_err_t initSystem() {
 //  Application Entry Point
 // ---------------------------------------------------------------------
 
-/*! 
+/*!
  * @brief Application entry point required by ESP-IDF.
  *
  * Sets log levels, calls `initSystem()`, creates the system state event
@@ -1220,6 +1222,7 @@ extern "C" void app_main() {
   // set log level for debug
   esp_log_level_set("FLASH_LOG", ESP_LOG_WARN);
   esp_log_level_set("BLE", ESP_LOG_WARN);
+  esp_log_level_set("LED", ESP_LOG_WARN);
 
   // Setup
   if (initSystem() != ESP_OK) {
@@ -1241,7 +1244,7 @@ extern "C" void app_main() {
   xTaskCreate(imuTask, "imu_task", 4096, NULL, 8, &imu_task_handle);
 
   // Create a task that manages led state
-  xTaskCreate(ledTask, "led_task", 256, NULL, 3, &led_task_handle); 
+  xTaskCreate(ledTask, "led_task", 2048, NULL, 3, &led_task_handle);
 
   // Create a task that will control program flow
   xTaskCreate(controlTask, "control", 4096, NULL, 9, &control_task_handle);
