@@ -9,10 +9,12 @@
 #pragma once
 #include "GPIO.hpp"
 #include "esp_err.h"
+#include "soc/gpio_num.h"
 
 namespace LED {
 
 /* Constants */
+constexpr gpio_num_t RED_LED{GPIO_NUM_13};
 constexpr gpio_num_t GREEN_LED{GPIO_NUM_9};
 constexpr bool LED_OFF{0};
 constexpr bool LED_ON{1};
@@ -35,10 +37,10 @@ public:
   esp_err_t turn_off();
 
   /** toggle
-   * Returns: 
+   * Returns:
    *      -Status
    */
-  esp_err_t toggle(); 
+  esp_err_t toggle();
 
 private:
   Common::GPIO led_;
