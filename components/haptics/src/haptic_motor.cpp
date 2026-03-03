@@ -20,7 +20,20 @@ bool DRV2605L::init() {
 
   // Check if device is present and not in over-current protection
   // Expected value is 0xE0 (device ID = 7, no errors)
-  return (status & 0xE0) == EXPECTED_STATUS;
+  if ((status & 0xE0) != EXPECTED_STATUS)
+    return false;
+
+  // default inits
+  // Set to internal trigger mode
+  set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+
+  // Select ERM motor
+  select_motor(HAPTICS::DRV2605L::MotorType::ERM);
+
+  // Select library
+  select_library(HAPTICS::DRV2605L::Library::ERM_LIB_A);
+
+  return true;
 }
 
 /*
@@ -74,8 +87,28 @@ void DRV2605L::set_waveform(uint8_t sequencer, uint8_t waveform) {
 /*
  * Trigger the waveform playback
  */
-void DRV2605L::go() {
-  write_register(REGISTERS::GO, 0x01);
+bool DRV2605L::go() {
+  return write_register(REGISTERS::GO, 0x01);
+}
+
+/*
+ * Program the sequencer with up to 8 effects and fire go().
+ */
+bool DRV2605L::play(const uint8_t *effects, uint8_t count) {
+  constexpr uint8_t MAX_SLOTS = 8;
+  if (count > MAX_SLOTS)
+    count = MAX_SLOTS;
+
+  // Buffer: [start_register, seq0..seq7, go_byte]
+  uint8_t buf[1 + MAX_SLOTS + 1];
+  buf[0] = REGISTERS::WAVESEQ1;
+
+  for (uint8_t i = 0; i < MAX_SLOTS; i++) {
+    buf[1 + i] = (i < count) ? effects[i] : 0x00;
+  }
+  buf[1 + MAX_SLOTS] = 0x01; // GO
+
+  return i2c_.write(address_, buf, sizeof(buf));
 }
 
 /*
@@ -247,9 +280,9 @@ uint8_t DRV2605L::get_backemf_result() {
 /*
  * Write a value to a register
  */
-void DRV2605L::write_register(uint8_t reg, uint8_t value) {
+bool DRV2605L::write_register(uint8_t reg, uint8_t value) {
   uint8_t data[2] = {reg, value};
-  i2c_.write(address_, data, sizeof(data));
+  return i2c_.write(address_, data, sizeof(data));
 }
 
 /*

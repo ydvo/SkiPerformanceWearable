@@ -77,12 +77,50 @@ public:
     LRA_RES_PERIOD = 0x22
   };
 
+  // Effect IDs from the DRV2605L ROM library (ERM Library A/B/C, see datasheet Table 11)
   enum EFFECTS : uint8_t {
-    LONG_BUZZ = 70,
-    DOUBLE_CLICK = 14,
-    SINGLE_CLICK = 1,
-    SHARP_CLICK = 47,
+    // Clicks
+    SINGLE_CLICK         = 1,
+    DOUBLE_CLICK         = 14,
+    TRIPLE_CLICK         = 16,
+    SHARP_CLICK          = 47,
+    SHARP_CLICK_2        = 48,
+    SHARP_CLICK_3        = 49,
+    SOFT_BUMP            = 52,
+    SOFT_BUMP_2          = 53,
+    SOFT_BUMP_3          = 54,
+
+    // Pulses / alerts
+    STRONG_BUZZ          = 62,
+    LONG_BUZZ            = 70,
+    ALERT_750MS          = 71,
+    ALERT_1000MS         = 72,
+    SHORT_DOUBLE_CLICK   = 11,
+    SHORT_DOUBLE_CLICK_2 = 12,
+
+    // Transitions / confirmations
+    RAMP_UP              = 58,
+    RAMP_DOWN            = 59,
+    TRANSITION_CLICK     = 65,
+    TRANSITION_HUM       = 66,
+
+    // Sequence terminator (do not play)
+    END                  = 0,
   };
+
+  /**
+   * Program the sequencer with up to 8 effects and fire go().
+   * The array must be terminated with EFFECTS::END or have exactly `count` entries.
+   * At most 8 slots are used; extra entries are ignored.
+   * All 8 sequence registers + GO are written in a single I2C transaction.
+   *
+   * Example:
+   *   uint8_t seq[] = { EFFECTS::SINGLE_CLICK, EFFECTS::END };
+   *   haptic.play(seq, 2);
+   *
+   * @return true on success, false if the I2C write failed
+   */
+  bool play(const uint8_t *effects, uint8_t count);
 
   static constexpr uint8_t DEFAULT_ADDRESS{0x5A};
   static constexpr uint8_t EXPECTED_STATUS{0xE0};
@@ -97,7 +135,7 @@ public:
   void select_motor(MotorType motor);
   void select_library(Library lib);
   void set_waveform(uint8_t sequencer, uint8_t waveform);
-  void go();
+  bool go();
   void stop();
 
   void set_realtime_value(uint8_t value);
@@ -134,7 +172,7 @@ private:
   espp::I2c &i2c_;
   uint8_t address_;
 
-  void write_register(uint8_t reg, uint8_t value);
+  bool write_register(uint8_t reg, uint8_t value);
   uint8_t read_register(uint8_t reg);
 };
 

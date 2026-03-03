@@ -6,24 +6,25 @@
 
 #include "NimBLEDevice.h"
 
-#include <string>
-#include <functional>
-#include <vector>
+#include <atomic>
 #include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
 
 namespace BLE {
 
-constexpr size_t SAMPLES_PER_FRAME = 8; 
+constexpr size_t SAMPLES_PER_FRAME = 8;
 
 struct __attribute__((packed)) FrameHeader {
-  uint16_t frame_seq; 
-  uint16_t sample_count; 
-  uint16_t payload_len; 
-  uint16_t flags; 
+  uint16_t frame_seq;
+  uint16_t sample_count;
+  uint16_t payload_len;
+  uint16_t flags;
 };
 
 struct __attribute__((packed)) FrameSample {
-  uint64_t timestamp; 
+  uint64_t timestamp;
   float w;
   float x;
   float y;
@@ -31,17 +32,17 @@ struct __attribute__((packed)) FrameSample {
 };
 
 struct __attribute__((packed)) Frame {
-  FrameHeader header; 
+  FrameHeader header;
   FrameSample payload[SAMPLES_PER_FRAME];
 };
 
 struct __attribute__((packed)) Ack {
-  uint16_t frame_seq; 
-}; 
+  uint16_t frame_seq;
+};
 
 static_assert(sizeof(FrameSample) == 24, "Frame sample expected to be 24 bytes packed.");
-static_assert(sizeof(FrameHeader) == 8, "Frame header expected to be 8 bytes packed."); 
-static_assert(sizeof(Frame) <= 244, "Frame size expected to fit into 1 notify packet.");  
+static_assert(sizeof(FrameHeader) == 8, "Frame header expected to be 8 bytes packed.");
+static_assert(sizeof(Frame) <= 244, "Frame size expected to fit into 1 notify packet.");
 
 /* BLE Module Class */
 class BleModule {
@@ -65,24 +66,24 @@ public:
     uint8_t init_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     uint8_t resp_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::INFO};
-    
+
     // PnP ID
     uint8_t vendor_source{0x01};
     uint16_t vendor_id{0xCafe};
     uint16_t product_id{0xFace};
     uint16_t product_version{0x0100};
-    
+
     // Callbacks
-    std::function<void(NimBLEConnInfo&)> on_connect;
-    std::function<void(NimBLEConnInfo&, espp::BleGattServer::DisconnectReason)> on_disconnect;
-    std::function<void(const NimBLEConnInfo&)> on_authenticated;
+    std::function<void(NimBLEConnInfo &)> on_connect;
+    std::function<void(NimBLEConnInfo &, espp::BleGattServer::DisconnectReason)> on_disconnect;
+    std::function<void(const NimBLEConnInfo &)> on_authenticated;
   };
 
   /**
    * @brief Constructor with configuration
    * @param config Configuration structure
    */
-  explicit BleModule(const Config& config);
+  explicit BleModule(const Config &config);
 
   /**
    * @brief Default constructor with default configuration
@@ -99,6 +100,13 @@ public:
    * @return true if successful, false otherwise
    */
   esp_err_t init();
+
+  /**
+   * @brief Apply a new configuration before init() is called.
+   *        Must not be called after init().
+   * @param config New configuration to apply
+   */
+  void reconfigure(const Config &config);
 
   /**
    * @brief Start advertising
@@ -134,7 +142,7 @@ public:
    * @brief Get the GATT server instance
    * @return Reference to the BleGattServer
    */
-  espp::BleGattServer& get_server();
+  espp::BleGattServer &get_server();
 
   /**
    * @brief Get connection info for connected devices
@@ -147,64 +155,84 @@ public:
    * @param info Connection info
    * @return RSSI value in dBm
    */
-  int get_rssi(const NimBLEConnInfo& info) const;
+  int get_rssi(const NimBLEConnInfo &info) const;
 
   /**
    * @brief Get name of connected device
    * @param info Connection info
    * @return Device name
    */
-  std::string get_device_name(const NimBLEConnInfo& info) const;
+  std::string get_connected_device_name(const NimBLEConnInfo &info) const;
 
   /**
    * @brief Set log level
    * @param level Log verbosity level
    */
   void set_log_level(espp::Logger::Verbosity level);
-      
+
   /** Register the custom Quaternion service/characteristic. Call once before advertising. */
   esp_err_t init_quat_service();
-  
-  /** Send a quaternion notification (payload must be 24 bytes). */
+
+  /** Send a quaternion notification. */
   esp_err_t notify_quaternion(const uint8_t *payload, size_t len);
-  
+
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
-  
-  /** Check if ACK was received (or if first send is pending) */
+
+  /**
+   * @brief Arm the ACK wait for the frame that was just sent.
+   *        Call this AFTER notify_quaternion so the ACK callback cannot fire
+   *        before ack_armed_ is set.
+   * @param seq The frame_seq just sent - the incoming Ack.frame_seq must match.
+   */
+  void arm_ack(uint16_t seq);
+
+  /**
+   * @brief Returns true once a valid ACK matching the armed seq has been received,
+   *        or if arm_ack() has not yet been called (idle / not armed).
+   */
   bool is_ack_received() const;
-  
-  /** Clear ACK flag after sending (call after notify_quaternion) */
-  void reset_ack();
-  
-  /** Reset state on new connection */
+
+  /** Reset ACK state on new connection */
   void reset_ack_on_connect();
 
-private:
-  class QuatCCCDCallbacks: public NimBLEDescriptorCallbacks {
-    BleModule *parent_; 
-  public:
-    explicit QuatCCCDCallbacks(BleModule *parent): parent_(parent) {}; 
-    void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override;
-  }; 
+  /** Simple getters **/
+  std::string get_name() const {
+    return config_.device_name;
+  }
 
-  class AckCharCallbacks: public NimBLECharacteristicCallbacks {
-    BleModule *parent_; 
-  public: 
-    explicit AckCharCallbacks(BleModule *parent): parent_(parent) {}; 
+private:
+  class QuatCCCDCallbacks : public NimBLEDescriptorCallbacks {
+    BleModule *parent_;
+
+  public:
+    explicit QuatCCCDCallbacks(BleModule *parent) : parent_(parent) {};
+    void onWrite(NimBLEDescriptor *pDescriptor, NimBLEConnInfo &connInfo) override;
+  };
+
+  class AckCharCallbacks : public NimBLECharacteristicCallbacks {
+    BleModule *parent_;
+
+  public:
+    explicit AckCharCallbacks(BleModule *parent) : parent_(parent) {};
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
   };
 
   NimBLECharacteristic *quat_char_ = nullptr;
-  NimBLECharacteristic *ack_char_ = nullptr; 
+  NimBLECharacteristic *ack_char_ = nullptr;
 
-  QuatCCCDCallbacks quat_cccd_cb_ {this}; 
-  AckCharCallbacks quat_ack_cb_ {this}; 
+  QuatCCCDCallbacks quat_cccd_cb_{this};
+  AckCharCallbacks quat_ack_cb_{this};
 
-  bool quat_notifications_enabled_ = false;
-  bool ack_received_ = false;
-  bool first_send_pending_ = false;
-  
+  std::atomic<bool> quat_notifications_enabled_{false};
+
+  // ack_armed_: set by arm_ack() after a notify is sent, cleared once a valid ACK arrives.
+  std::atomic<bool> ack_armed_{false};
+  // ack_received_: set to true by AckCharCallbacks when a valid seq-matched ACK arrives.
+  std::atomic<bool> ack_received_{false};
+  // The frame_seq we expect the client to echo in its ACK write.
+  std::atomic<uint16_t> ack_expected_seq_{0};
+
   Config config_;
   espp::BleGattServer ble_gatt_server_;
   uint8_t battery_level_{100};

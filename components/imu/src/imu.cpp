@@ -1,6 +1,7 @@
 #include "imu.hpp"
 #include "esp_log.h"
 #include "fast_math.hpp"
+#include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 #include <system_error>
 
@@ -12,7 +13,12 @@ static const char *TAG{"IMU"};
 Imu::Value calibrate_mag(espp::icm20948::Value raw);
 
 // constructor
-Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {}
+Imu::Imu(espp::I2c &i2c) : Imu(make_default_config(i2c)) {
+  // Set the combined write_then_read callback on the base peripheral to reduce bus operations
+  imu_.set_write_then_read(std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1,
+                                     std::placeholders::_2, std::placeholders::_3,
+                                     std::placeholders::_4, std::placeholders::_5));
+}
 
 Imu::Imu(ICM::Config cfg) : imu_(cfg), filter_(MADGWICK_BETA), enable_magnetometer_{1} {}
 
@@ -40,6 +46,8 @@ bool Imu::init() {
     ESP_LOGE(TAG, "Error initializing: %s", ec.message().c_str());
     return false;
   }
+
+  vTaskDelay(pdMS_TO_TICKS(INIT_DELAY));
 
   // set and enable low pass filters
   if (!imu_.set_accelerometer_dlpf(ACCEL_LPF_BANDWIDTH, ec)) {
@@ -116,6 +124,12 @@ bool Imu::update(float dt) {
   filter_.get_quaternion(orientation_.w, orientation_.x, orientation_.y, orientation_.z);
 
   return true;
+}
+
+Imu::Euler Imu::get_euler() const {
+  Euler e;
+  filter_.get_euler(e.pitch, e.roll, e.yaw);
+  return e;
 }
 
 Imu::Value Imu::apply_mag_cal(espp::icm20948::Value raw) {

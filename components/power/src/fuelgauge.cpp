@@ -83,7 +83,16 @@ float fuelgauge::cellPercent(void) {
 
   if (status) {
     float percent = static_cast<float>(uint16_t(buffer[0] << 8) | buffer[1]);
-    return percent / 256.0;
+
+    percent = percent / 256.0;
+
+    // clamp percent values
+    if (percent < 0.0f)
+      percent = 0.0f;
+    if (percent > 100.0f)
+      percent = 100.0f;
+
+    return percent;
   }
 
   return 0.0f;
