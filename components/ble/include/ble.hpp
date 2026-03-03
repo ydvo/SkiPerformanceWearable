@@ -231,6 +231,16 @@ public:
   /** Send a quaternion notification. */
   esp_err_t notify_quaternion(const uint8_t *payload, size_t len);
 
+  /**
+   * @brief Notify the central that all flash data has been uploaded.
+   *
+   * Writes 0x01 to the upload-status characteristic and sends a BLE
+   * notification. The central should subscribe to this characteristic
+   * (enable CCCD) to receive the event. Returns ESP_ERR_INVALID_STATE if
+   * BLE is not connected or the characteristic is not initialized.
+   */
+  esp_err_t notify_upload_complete();
+
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
 
@@ -284,6 +294,7 @@ private:
   NimBLECharacteristic *quat_char_ = nullptr;
   NimBLECharacteristic *ack_char_ = nullptr;
   NimBLECharacteristic *ctrl_char_ = nullptr;
+  NimBLECharacteristic *status_char_ = nullptr;
 
   QuatCCCDCallbacks quat_cccd_cb_{this};
   AckCharCallbacks quat_ack_cb_{this};

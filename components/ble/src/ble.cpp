@@ -10,6 +10,7 @@ static const NimBLEUUID QUAT_SVC_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f700"};
 static const NimBLEUUID QUAT_CHAR_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f701"};
 static const NimBLEUUID QUAT_ACK_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f702"};
 static const NimBLEUUID QUAT_CTRL_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f703"};
+static const NimBLEUUID QUAT_STATUS_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f704"};
 
 BleModule::BleModule() : config_(), battery_level_(100), initialized_(false) {}
 
@@ -319,6 +320,27 @@ esp_err_t BleModule::init_quat_service() {
   ctrlUserDescriptor->setValue("Control (WRITE: 0x01=toggle recording)");
   ESP_LOGI(TAG, "Control User Description set");
 
+  ESP_LOGI(TAG, "Creating upload status characteristic");
+  status_char_ = svc->createCharacteristic(QUAT_STATUS_UUID,
+                                           NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(status_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create upload status characteristic");
+
+  // Initialise to 0x00 (not complete)
+  static const uint8_t STATUS_IDLE = 0x00;
+  status_char_->setValue(&STATUS_IDLE, 1);
+  ESP_LOGI(TAG, "Upload status characteristic created");
+
+  NimBLEDescriptor *statusUserDescriptor =
+      status_char_->createDescriptor(NimBLEUUID((uint16_t)0x2901), NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(statusUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create status user descriptor");
+
+  statusUserDescriptor->setValue("Upload Status (NOTIFY 0x01 when flash fully drained)");
+  ESP_LOGI(TAG, "Upload Status User Description set");
+
   ESP_LOGI(TAG, "Starting service");
   svc->start();
   ESP_LOGI(TAG, "Quaternion service started");
@@ -340,6 +362,23 @@ esp_err_t BleModule::notify_quaternion(const uint8_t *payload, size_t len) {
 
   ESP_LOGD(TAG, "notify_quaternion: sent %u bytes", (unsigned)len);
 
+  return ESP_OK;
+}
+
+esp_err_t BleModule::notify_upload_complete() {
+  ESP_RETURN_ON_FALSE(status_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Upload status characteristic is not initialized");
+
+  ESP_RETURN_ON_FALSE(is_connected(), ESP_ERR_INVALID_STATE, TAG,
+                      "BLE not connected, cannot send upload-complete notification");
+
+  static const uint8_t STATUS_DONE = 0x01;
+  status_char_->setValue(&STATUS_DONE, 1);
+
+  ESP_RETURN_ON_FALSE(status_char_->notify(), ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to notify upload-complete status");
+
+  ESP_LOGI(TAG, "notify_upload_complete: sent");
   return ESP_OK;
 }
 

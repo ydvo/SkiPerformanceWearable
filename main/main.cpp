@@ -365,6 +365,9 @@ enum class UploadState : uint8_t {
 void uploadTask(void *arg) {
   uint32_t total_frames_sent = 0;
   uint32_t total_ack_timeouts = 0;
+  static STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame; 
+  static BLE::Frame ble_frame{
+        .header = {.frame_seq = 0, .sample_count = 0, .payload_len = 0, .flags = 0}, .payload = {}};
 
   for (;;) {
     xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::RUNNING), false, true,
@@ -372,29 +375,54 @@ void uploadTask(void *arg) {
 
     UploadState upload_state = UploadState::BUFFER_FLASH_FRAME;
 
-    STORAGE::FlashLog<STORAGE::Quaternion>::Frame flash_frame;
-    BLE::Frame ble_frame{
-        .header = {.frame_seq = 0, .sample_count = 0, .payload_len = 0, .flags = 0}, .payload = {}};
-
     size_t samples_sent_from_frame{0};
     int64_t ble_ack_start;
     int64_t ack_wait_us;
 
-    while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
+    // Per-run drain tracking: set once a flash frame is successfully sent,
+    // used to detect when upload is complete after recording stops.
+    bool ever_had_data = false;
+    bool drain_notified = false;
+
+    while (true) {
+      EventBits_t bits = xEventGroupGetBits(system_state);
+      bool still_running = bits & static_cast<EventBits_t>(SystemState::RUNNING);
+      bool in_ready     = bits & static_cast<EventBits_t>(SystemState::READY);
+
+      // Exit once drain notification has been sent (or there was nothing to drain)
+      if (drain_notified) break;
+      // Exit if the system left RUNNING/READY (e.g. BLE disconnected → IDLE)
+      if (!still_running && !in_ready) break;
+
       switch (upload_state) {
       case UploadState::BUFFER_FLASH_FRAME: {
         size_t frames_read{0};
 
         logger.debug("Upload: reading frame from flash");
         if (flash_log.read(&flash_frame, 1, &frames_read) == ESP_OK && frames_read > 0) {
+          ever_had_data = true;
           samples_sent_from_frame = 0;
           logger.info("Upload: loaded flash frame seq={} ({} samples per frame)",
                       (uint32_t)flash_frame.seq, (uint32_t)STORAGE::SAMPLES_PER_FRAME);
 
           upload_state = UploadState::INITIALIZE_BLE_FRAME;
         } else {
-          logger.debug("Upload: no flash data, retrying in {}ms", UPLOAD_RETRY_DELAY_MS);
-          vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
+          if (!still_running) {
+            // Recording has stopped and flash is empty – drain complete
+            if (ever_had_data) {
+              if (ble.notify_upload_complete() == ESP_OK) {
+                logger.info("Upload: flash fully drained, central notified");
+              } else {
+                logger.warn("Upload: flash drained but notify_upload_complete failed");
+              }
+            } else {
+              logger.info("Upload: run ended with no complete flash frames to drain");
+            }
+            drain_notified = true;
+          } else {
+            logger.debug("Upload: no flash data, retrying in {}ms", UPLOAD_RETRY_DELAY_MS);
+            vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
+          }
         }
 
         break;
