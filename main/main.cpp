@@ -228,6 +228,7 @@ static TaskHandle_t battery_task_handle = nullptr;
 static TaskHandle_t haptic_task_handle = nullptr;
 static TaskHandle_t fsr_task_handle = nullptr;
 static TaskHandle_t calibration_task_handle = nullptr;
+static TaskHandle_t led_task_handle = nullptr; 
 
 // queue for imu data
 static QueueHandle_t imuQueue = nullptr;
@@ -760,6 +761,53 @@ void batteryTask(void *arg) {
   }
 }
 
+uint8_t LED_LOW_FREQ { 1 }; // 1 Hz frequency -> period is 2 seconds
+uint8_t LED_MID_FREQ { 2 }; // 2 Hz frequency -> period is 1 seconds
+uint8_t LED_HIGH_FREQ { 10 }; // 10 Hz frequency -> period is 0.2 seconds
+
+void ledTask(void *arg) {
+  static SystemState currstate; 
+
+  for (;;) {
+    currstate = static_cast<SystemState>(xEventGroupGetBits(system_state));
+    
+    switch (currstate) {
+    case SystemState::SLEEP: 
+      // Turn off led when device is asleep
+      green_led.turn_off(); 
+      vTaskDelay(pdMS_TO_TICKS(1000)); 
+      break; 
+    case SystemState::IDLE: 
+      // Not connected, flash periodically with medium frequency
+      green_led.toggle(); 
+      vTaskDelay(pdMS_TO_TICKS(1000/LED_MID_FREQ)); 
+      break; 
+    case SystemState::READY: 
+      // Connected, led stays on
+      green_led.turn_on(); 
+      vTaskDelay(pdMS_TO_TICKS(1000)); 
+      break; 
+    case SystemState::RUNNING: 
+      // Session running, flash periodically with low frequency
+      green_led.toggle(); 
+      vTaskDelay(pdMS_TO_TICKS(1000/LED_LOW_FREQ)); 
+      break; 
+    case SystemState::ERROR:
+      // Error state, turn off led
+      green_led.turn_off(); 
+      vTaskDelay(pdMS_TO_TICKS(1000)); 
+      break;
+    case SystemState::CALIBRATING:
+      // Device calibrating, flash periodically with high frequency
+      green_led.toggle(); 
+      vTaskDelay(pdMS_TO_TICKS(1000/LED_HIGH_FREQ)); 
+      break; 
+    default:
+      vTaskDelay(pdMS_TO_TICKS(1000)); 
+      break; 
+    }
+  }
+}
 // ---------------------------------------------------------------------
 // State Machine
 // ---------------------------------------------------------------------
@@ -1191,6 +1239,9 @@ extern "C" void app_main() {
 
   // Create a task that will capture sensor data
   xTaskCreate(imuTask, "imu_task", 4096, NULL, 8, &imu_task_handle);
+
+  // Create a task that manages led state
+  xTaskCreate(ledTask, "led_task", 256, NULL, 3, &led_task_handle); 
 
   // Create a task that will control program flow
   xTaskCreate(controlTask, "control", 4096, NULL, 9, &control_task_handle);

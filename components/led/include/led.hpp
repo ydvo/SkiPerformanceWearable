@@ -34,6 +34,12 @@ public:
    */
   esp_err_t turn_off();
 
+  /** toggle
+   * Returns: 
+   *      -Status
+   */
+  esp_err_t toggle(); 
+
 private:
   Common::GPIO led_;
 };
