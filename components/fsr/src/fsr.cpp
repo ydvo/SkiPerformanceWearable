@@ -33,7 +33,7 @@ float fsr::read() {
     float voltage = result.value();
 
     // Check threshold if set
-    if (pressure_threshold_ > 0 && voltage >= pressure_threshold_) {
+    if (pressure_threshold_ > 0 && voltage <= pressure_threshold_) {
       if (!is_pressed_) {
         ESP_LOGI(TAG, "Pressure detected: %.2f mV (threshold: %.2f mV)", voltage,
                  pressure_threshold_);
