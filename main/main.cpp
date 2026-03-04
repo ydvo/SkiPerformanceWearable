@@ -28,6 +28,7 @@
 #include "led.hpp"
 #include "logger.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <stdint.h>
@@ -95,6 +96,9 @@ SENSORS::fsr pressure_sensor(fsr_pin);
 // Haptics
 HAPTICS::DRV2605L haptic(i2c);
 
+/** @brief Runtime flag indicating haptic hardware is present and initialized. */
+static std::atomic<bool> has_haptics{false};
+
 // Initialize LED
 LED::led green_led = LED::led(LED::GREEN_LED);
 
@@ -127,7 +131,7 @@ static constexpr float FSR_HIGH{2893.5f};
 static constexpr uint32_t FSR_POLL_INTERVAL_MS{50};
 
 /** @brief RTP intensity value (0-255) for haptic feedback when threshold exceeded. */
-static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{255};
+static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{127};
 
 /** @brief Delay before calibration phase starts (ms). */
 static constexpr uint32_t CAL_PHASE_DELAY_MS{3000};
@@ -247,6 +251,8 @@ static QueueHandle_t hapticQueue = nullptr;
  * @param event Identifier of the haptic event to enqueue.
  */
 static inline void haptic_notify(HapticEvent event) {
+  if (!has_haptics.load(std::memory_order_relaxed))
+    return;
   if (hapticQueue != nullptr) {
     xQueueSend(hapticQueue, &event, 0); // non-blocking, drop if queue full
   }
@@ -1103,10 +1109,10 @@ esp_err_t initSystem() {
   pressure_sensor.set_pressure_threshold(fsr_threshold);
   logger.info("FSR threshold set to {:.1f} mV", fsr_threshold);
 
-  // Haptic setup
-  if (!haptic.init()) {
-    logger.error("Could not initialize haptics");
-    // return ESP_ERR_INVALID_STATE;
+  // Haptic setup (optional hardware -- non-fatal if absent)
+  has_haptics.store(haptic.init(), std::memory_order_relaxed);
+  if (!has_haptics.load(std::memory_order_relaxed)) {
+    logger.warn("Haptic motor not detected -- haptic features disabled");
   }
 
   // initialize spi
@@ -1195,10 +1201,12 @@ esp_err_t initSystem() {
     return ESP_ERR_INVALID_STATE;
   }
 
-  // Create haptic queue
-  hapticQueue = xQueueCreate(HAPTIC_QUEUE_LENGTH, sizeof(HapticEvent));
-  if (hapticQueue == nullptr) {
-    logger.error("Failed to create haptic queue");
+  // Create haptic queue (only if haptic hardware is present)
+  if (has_haptics.load(std::memory_order_relaxed)) {
+    hapticQueue = xQueueCreate(HAPTIC_QUEUE_LENGTH, sizeof(HapticEvent));
+    if (hapticQueue == nullptr) {
+      logger.error("Failed to create haptic queue");
+    }
   }
 
   // turn on led to indicate successful init
@@ -1255,11 +1263,13 @@ extern "C" void app_main() {
   // Create a task that periodically updates the BLE battery level
   xTaskCreate(batteryTask, "battery", 3072, NULL, 2, &battery_task_handle);
 
-  // Create a task that plays haptic events from the queue
-  xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
+  // Create a task that plays haptic events from the queue (only if hardware present)
+  if (has_haptics.load(std::memory_order_relaxed)) {
+    xTaskCreate(hapticTask, "haptic", 3072, NULL, 5, &haptic_task_handle);
 
-  // Create a task that monitors FSR and triggers haptic warning
-  xTaskCreate(fsrTask, "fsr_task", 4096, NULL, 5, &fsr_task_handle);
+    // Create a task that monitors FSR and triggers haptic warning
+    xTaskCreate(fsrTask, "fsr_task", 4096, NULL, 5, &fsr_task_handle);
+  }
 
   // Create a task that runs the FSR calibration sequence
   xTaskCreate(calibrationTask, "calibrate", 4096, NULL, 5, &calibration_task_handle);
