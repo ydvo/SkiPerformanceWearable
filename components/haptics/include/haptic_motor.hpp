@@ -183,10 +183,17 @@ public:
    * @brief Initialize the DRV2605L device.
 +   *
 +   * Checks the status register; if the device is present and not in error, it
-+   * configures default mode, motor type, and library.
++   * configures default mode, motor type, and library. Safe to call multiple
++   * times; subsequent calls return true immediately if already initialized.
 +   * @return true on successful initialization, false otherwise.
 +   */
   bool init();
+
+  /**
+   * @brief Check whether the driver has been successfully initialized.
+   * @return true if init() previously succeeded, false otherwise.
+   */
+  bool is_initialized() const noexcept;
   /**
    * @brief Query whether the device is ready for operation.
 +   *
@@ -257,6 +264,7 @@ public:
 private:
   espp::I2c &i2c_;
   uint8_t address_;
+  bool initialized_{false};
 
   bool write_register(uint8_t reg, uint8_t value);
   uint8_t read_register(uint8_t reg);
