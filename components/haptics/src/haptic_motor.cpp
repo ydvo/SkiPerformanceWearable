@@ -335,6 +335,15 @@ uint8_t DRV2605L::get_backemf_result() {
 }
 
 /*
+ * Enter standby mode (set bit 6 of MODE register)
+ */
+void DRV2605L::enter_standby() {
+  if (!initialized_)
+    return;
+  write_register(REGISTERS::MODE, 0x40);
+}
+
+/*
  * Write a value to a register
  */
 bool DRV2605L::write_register(uint8_t reg, uint8_t value) {

@@ -261,6 +261,9 @@ public:
   uint8_t get_comp_result();
   uint8_t get_backemf_result();
 
+  /** @brief Put the DRV2605L into standby mode (~25 uA). */
+  void enter_standby();
+
 private:
   espp::I2c &i2c_;
   uint8_t address_;
