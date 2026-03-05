@@ -125,7 +125,7 @@ static constexpr uint32_t LONG_PRESS_MS{3000};
 static constexpr float FSR_LOW{0.00f};
 
 /** @brief Maximum calibrated force sensor value (raw ADC units). */
-static constexpr float FSR_HIGH{2893.5f};
+static constexpr float FSR_HIGH{3000.0f};
 
 /** @brief Polling interval for force sensor task (ms). */
 static constexpr uint32_t FSR_POLL_INTERVAL_MS{50};
@@ -137,7 +137,10 @@ static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{127};
 static constexpr uint32_t CAL_PHASE_DELAY_MS{3000};
 
 /** @brief Threshold percentage of calibrated range to trigger events. */
-static constexpr float FSR_THRESHOLD_PERCENT{0.7f};
+static constexpr float FSR_THRESHOLD_PERCENT{0.01f};
+
+/** @brief Threshold percentage of calibrated range to trigger events. */
+static constexpr float FSR_THRESHOLD_MV{2999.0f};
 
 /** @brief Queue size for IMU samples. */
 static constexpr uint8_t IMU_QUEUE_SIZE{64};
@@ -665,6 +668,7 @@ void fsrTask(void *arg) {
 
     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
       float voltage = pressure_sensor.read();
+      printf("%f\n", voltage);
       bool exceeded = pressure_sensor.is_pressed();
 
       if (exceeded && !warning_active) {
@@ -728,11 +732,11 @@ void calibrationTask(void *arg) {
     logger.info("Calibration: max = {:.1f} mV", pressure_sensor.get_max());
 
     // Compute and set threshold
-    float threshold =
-        pressure_sensor.get_baseline() +
-        (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * FSR_THRESHOLD_PERCENT;
-    pressure_sensor.set_pressure_threshold(threshold);
-    logger.info("Calibration: threshold set to {:.1f} mV", threshold);
+    // float threshold =
+    //     pressure_sensor.get_baseline() +
+    //     (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * FSR_THRESHOLD_PERCENT;
+    pressure_sensor.set_pressure_threshold(FSR_THRESHOLD_MV);
+    logger.info("Calibration: threshold set to {:.1f} mV", FSR_THRESHOLD_MV);
 
     // Signal completion
     haptic_notify(HapticEvent::CAL_COMPLETE);
