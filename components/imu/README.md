@@ -3,29 +3,36 @@
 **Purpose**
 Interfaces with the ICM‑20948 9‑axis IMU over I²C, reads raw accelerometer, gyroscope, and magnetometer data, and runs a Madgwick filter to produce a drift‑corrected orientation quaternion.
 
-**Key Headers**
-- `imu.hpp` – high‑level `IMU::Imu` class (initialization, data acquisition, quaternion output).
-- `madgwick_filter_quat.hpp` – template implementation of the Madgwick algorithm for quaternion output.
+**Key Header**
+- `imu.hpp` – high‑level `SENSORS::Imu` class (initialization, data acquisition, quaternion output, low‑power control).
 
-**Public API (class `IMU::Imu`)**
-- Constructor `Imu(const Config &cfg)` – store I²C bus configuration, sampling rates, filter gains.
-- `esp_err_t init()` – configure I²C, reset sensor, enable required modules (ACCEL, GYRO, MAG).
-- `esp_err_t read_raw(IMU::RawData &out)` – fetch raw sensor registers.
-- `esp_err_t update()` – read raw data, feed Madgwick filter, update internal quaternion.
-- `Quaternion get_quaternion() const` – retrieve latest filtered orientation (w, x, y, z).
+**Public API (class `SENSORS::Imu`)**
+- Constructor `Imu(espp::I2c &i2c)` – creates the IMU using a pre‑configured I²C instance.
+- `bool init()` – configure the sensor, enable required modules, and set filter parameters.
+- `bool update(float dt)` – read raw data, update Madgwick filter, and store latest quaternion.
+- `bool update_raw(float dt)` – read raw sensor values without filtering.
+- `Quaternion get_orientation() const` – retrieve the latest filtered quaternion.
+- `Raw get_raw() const` – access the most recent raw sensor readings.
+- `esp_err_t sleep()` – put the ICM‑20948 into hardware sleep mode (~8 µA).
+- `esp_err_t wake()` – bring the sensor out of sleep mode.
 
 **Thread‑Safety**
-`update()` may be called from a dedicated sensor task; internal state (`Quaternion`) is protected by a mutex so `get_quaternion()` can be called from other tasks.
+`update()` and `update_raw()` are intended to be called from a dedicated sensor task. The quaternion is stored in a plain struct without a mutex; callers must ensure exclusive access when reading it from other tasks.
 
 **Typical Usage**
 ```cpp
-IMU::Imu imu({ .i2c_port = I2C_NUM_0, .address = 0x68 });
-imu.init();
-
-while (true) {
-    imu.update();
-    auto q = imu.get_quaternion();
-    // transmit q over BLE, log, or use for control …
-    vTaskDelay(pdMS_TO_TICKS(10));
+SENSORS::Imu imu(i2c);
+if (!imu.init()) {
+    // handle init error
 }
+
+// Normal operation
+imu.update(0.01f);
+auto q = imu.get_orientation();
+
+// Before deep‑sleep
+imu.sleep();
+
+// After wake‑up
+imu.wake();
 ```

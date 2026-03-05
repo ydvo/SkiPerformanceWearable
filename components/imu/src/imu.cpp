@@ -155,4 +155,24 @@ Imu::Value Imu::apply_mag_cal(espp::icm20948::Value raw) {
   return calibrated;
 }
 
+esp_err_t Imu::sleep() {
+  std::error_code ec;
+  imu_.sleep(true, ec);
+  if (ec) {
+    ESP_LOGE(TAG, "IMU sleep failed: %s", ec.message().c_str());
+    return ESP_FAIL;
+  }
+  return ESP_OK;
+}
+
+esp_err_t Imu::wake() {
+  std::error_code ec;
+  imu_.sleep(false, ec);
+  if (ec) {
+    ESP_LOGE(TAG, "IMU wake failed: %s", ec.message().c_str());
+    return ESP_FAIL;
+  }
+  return ESP_OK;
+}
+
 } // namespace SENSORS

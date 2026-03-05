@@ -196,6 +196,12 @@ public:
     memcpy(A_, A, sizeof(A_));
   }
 
+  /** @brief Put the ICM-20948 into hardware sleep mode (~8 uA). */
+  esp_err_t sleep();
+
+  /** @brief Wake the ICM-20948 from hardware sleep mode. */
+  esp_err_t wake();
+
 private:
   Value apply_mag_cal(espp::icm20948::Value raw); // helper function to apply magnetomer calibration
 
