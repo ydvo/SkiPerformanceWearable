@@ -182,12 +182,10 @@ IDLE  -->  READY  -->  RUNNING
 
 ### Button Controls
 
-The boot button (GPIO 0) is polled at 20 Hz by the button task:
+The physical button (GPIO 6) is polled at 20 Hz by the button task. It is now used **only for power management**:
 
-- **Short press** (< 3 s): Sends `TOGGLE_RUN` event. In READY state this
-  starts a run; in RUNNING state it stops the run.
-- **Long press** (>= 3 s): Sends `START_CALIBRATION` event. Only takes
-  effect in READY state.
+- **Long press** (≥ 3 s): Sends `SLEEP_REQUEST` event. The device will enter deep‑sleep. Deep‑sleep can be exited only by a **sustained hold** of the button after wake‑up (see *Wake‑up handling*).
+- **Short press**: Ignored – runs are started and stopped exclusively via BLE control commands.
 
 ### FSR Calibration Sequence
 

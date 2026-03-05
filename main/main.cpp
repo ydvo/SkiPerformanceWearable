@@ -10,6 +10,7 @@
 #include "driver/spi_common.h"
 #include "esp_check.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -27,6 +28,8 @@
 #include "i2c.hpp"
 #include "led.hpp"
 #include "logger.hpp"
+
+#include "esp_sleep.h"
 
 #include <atomic>
 #include <cstddef>
@@ -108,6 +111,9 @@ BLE::BleModule ble;
 Common::GPIO big_button(GPIO_NUM_6, Common::GPIO::Direction::INPUT, Common::GPIO::Level::ON,
                         Common::GPIO::PULLUP);
 
+// Stemma QT power control (I2C power rail)
+Common::GPIO stemma_qt_power(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
+
 // ---------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------
@@ -119,7 +125,10 @@ static constexpr uint32_t BUTTON_POLL_MS{20};
 static constexpr uint32_t BUTTON_DEBOUNCE_MS{50};
 
 /** @brief Duration for detecting a long press (ms). */
-static constexpr uint32_t LONG_PRESS_MS{3000};
+static constexpr uint32_t LONG_PRESS_MS{2000};
+
+/** @brief Duration button must be held after deep sleep wake to confirm boot (ms). */
+static constexpr uint32_t WAKE_HOLD_MS{250};
 
 /** @brief Minimum calibrated force sensor value (raw ADC units). */
 static constexpr float FSR_LOW{0.00f};
@@ -185,6 +194,7 @@ enum class HapticEvent : uint8_t {
   CAL_START,      // calibration started (release pressure)
   CAL_PHASE_TWO,  // apply full pressure now
   CAL_COMPLETE,   // calibration finished
+  SLEEP,          // device entering deep sleep
 };
 
 // ---------------------------------------------------------------------
@@ -215,6 +225,7 @@ enum class Event : uint8_t {
   TOGGLE_RUN,
   START_CALIBRATION,
   CALIBRATION_DONE,
+  SLEEP_REQUEST,
 };
 
 // statically allocated event queue
@@ -236,6 +247,7 @@ static TaskHandle_t haptic_task_handle = nullptr;
 static TaskHandle_t fsr_task_handle = nullptr;
 static TaskHandle_t calibration_task_handle = nullptr;
 static TaskHandle_t led_task_handle = nullptr;
+static TaskHandle_t button_task_handle = nullptr;
 
 // queue for imu data
 static QueueHandle_t imuQueue = nullptr;
@@ -601,6 +613,9 @@ static const HapticSequence haptic_sequences[] = {
 
     // CAL_COMPLETE: ramp down to signal calibration finished
     {HapticEvent::CAL_COMPLETE, 1, {E::RAMP_DOWN, E::END}},
+
+    // SLEEP: descending pattern to signal device going to sleep
+    {HapticEvent::SLEEP, 3, {E::RAMP_DOWN, E::TRANSITION_HUM, E::SOFT_BUMP, E::END}},
 };
 } // namespace
 
@@ -743,6 +758,58 @@ void calibrationTask(void *arg) {
 
     Event e = Event::CALIBRATION_DONE;
     xQueueSend(eventQueue, &e, 0);
+  }
+}
+
+// ----- Button ISR and Task -----
+
+/*!
+ * @brief GPIO ISR for the button (falling edge).
+ *
+ * Wakes the button task via a direct-to-task notification. Debounce and
+ * long-press detection are handled in the task, not here.
+ */
+static void IRAM_ATTR button_isr(void *arg) {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  vTaskNotifyGiveFromISR(button_task_handle, &xHigherPriorityTaskWoken);
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+/*!
+ * @brief FreeRTOS task that debounces button presses and detects long-press.
+ *
+ * Long press (>=3s): posts SLEEP_REQUEST event.
+ *
+ * @param arg Unused task argument.
+ */
+void buttonTask(void *arg) {
+  for (;;) {
+    // Block until ISR fires (falling edge = button pressed)
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    // Debounce: wait and re-check level
+    vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));
+    if (big_button.getLevel()) {
+      continue; // false trigger, button already released
+    }
+
+    // Button is held. Time the hold duration.
+    uint32_t held_ms = BUTTON_DEBOUNCE_MS;
+    bool long_press = false;
+    while (!big_button.getLevel()) {
+      vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
+      held_ms += BUTTON_POLL_MS;
+      if (held_ms >= LONG_PRESS_MS) {
+        long_press = true;
+        break;
+      }
+    }
+
+    if (long_press) {
+      Event e = Event::SLEEP_REQUEST;
+      xQueueSend(eventQueue, &e, 0);
+    }
+    // Short press is ignored -- runs are started/stopped over BLE only
   }
 }
 
@@ -913,6 +980,49 @@ static void switch_states(SystemState currstate, SystemState nextstate) {
   logger.info("State: {}", s);
 }
 
+// ----- Deep Sleep -----
+
+/*!
+ * @brief Shuts down peripherals and enters ESP32-S3 deep sleep.
+ *
+ * Sequence: haptic buzz, turn off LED, deinit BLE, sleep IMU,
+ * standby haptic driver, disable I2C power rail, configure ext1 wakeup
+ * on GPIO_NUM_6 (button), then enter deep sleep. Does not return --
+ * the chip reboots through app_main() on wake.
+ */
+static void enterDeepSleep() {
+  logger.info("Entering deep sleep...");
+
+  // 1. Haptic buzz
+  haptic_notify(HapticEvent::SLEEP);
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  // 2. Turn off LED
+  green_led.turn_off();
+
+  // 3. Deinit BLE (stop advertising, disconnect, tear down NimBLE stack)
+  ble.deinit();
+
+  // 4. Put IMU into hardware sleep
+  imu.sleep();
+
+  // 5. Put haptic driver into standby
+  if (has_haptics.load(std::memory_order_relaxed)) {
+    haptic.enter_standby();
+  }
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  // 6. Disable Stemma QT power (kills I2C power rail)
+  stemma_qt_power.setLevel(false);
+
+  // 7. Configure ext1 wakeup on GPIO_NUM_6 (active low with pull-up)
+  esp_sleep_enable_ext1_wakeup(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ANY_LOW);
+
+  // 8. Enter deep sleep (does not return)
+  esp_deep_sleep_start();
+}
+
 // state machine
 //  - transitions on Events
 /*!
@@ -947,6 +1057,10 @@ void controlTask(void *arg) {
           haptic_notify(HapticEvent::BLE_CONNECT);
           break;
 
+        case Event::SLEEP_REQUEST:
+          enterDeepSleep(); // does not return
+          break;
+
         default:
           break;
         }
@@ -969,6 +1083,10 @@ void controlTask(void *arg) {
           advertiseBLE();
           switch_states(SystemState::READY, SystemState::IDLE);
           haptic_notify(HapticEvent::BLE_DISCONNECT);
+          break;
+
+        case Event::SLEEP_REQUEST:
+          enterDeepSleep(); // does not return
           break;
 
         default:
@@ -1077,9 +1195,7 @@ void on_ble_disconnect(NimBLEConnInfo &info, espp::BleGattServer::DisconnectReas
 esp_err_t initSystem() {
   logger.info("Initializing...");
 
-  // enable QT Stemma Port
-  Common::GPIO stemma_qt_power =
-      Common::GPIO(GPIO_NUM_7, Common::GPIO::Direction::OUTPUT, Common::GPIO::Level::ON);
+  // enable QT Stemma Port (global stemma_qt_power already constructed with ON level)
   logger.info("Enabled QT Stemma Port");
 
   // create i2c instance
@@ -1231,6 +1347,38 @@ esp_err_t initSystem() {
  * haptic motor that boot is complete.
  */
 extern "C" void app_main() {
+  // Detect wakeup cause and validate sustained button hold
+  esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+  if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
+    ESP_LOGI("MAIN", "Woke from deep sleep -- validating button hold");
+
+    // Turn on LED while waiting for the user to hold the button
+    green_led.turn_on();
+    uint32_t held_ms = 0;
+    bool confirmed = true;
+    while (held_ms < WAKE_HOLD_MS) {
+      if (big_button.getLevel()) {
+        // Button released too early -- go back to sleep
+        confirmed = false;
+        break;
+      }
+      vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
+      held_ms += BUTTON_POLL_MS;
+    }
+
+    if (!confirmed) {
+      ESP_LOGI("MAIN", "Button released early -- returning to deep sleep");
+      green_led.turn_off();
+      esp_sleep_enable_ext1_wakeup(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ANY_LOW);
+      esp_deep_sleep_start();
+      // does not return
+    }
+
+    ESP_LOGI("MAIN", "Button hold confirmed -- booting");
+  } else {
+    ESP_LOGI("MAIN", "Cold boot (power-on or reset)");
+  }
+
   // set log level for debug
   esp_log_level_set("FLASH_LOG", ESP_LOG_WARN);
   esp_log_level_set("BLE", ESP_LOG_WARN);
@@ -1260,6 +1408,15 @@ extern "C" void app_main() {
 
   // Create a task that will control program flow
   xTaskCreate(controlTask, "control", 4096, NULL, 9, &control_task_handle);
+
+  // Create a task that handles button press debounce and long-press detection
+  xTaskCreate(buttonTask, "button", 2048, NULL, 7, &button_task_handle);
+
+  // Register button ISR after task handle is valid
+  if (big_button.set_interrupt(Common::GPIO::INTERRUPT_FALLING_EDGE, button_isr, nullptr) !=
+      ESP_OK) {
+    logger.error("Failed to set button interrupt");
+  }
 
   // Create a task that will transmit stored data over BLE
   xTaskCreate(uploadTask, "upload", 4096, NULL, 4, &upload_task_handle);
