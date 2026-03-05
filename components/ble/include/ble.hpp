@@ -157,6 +157,15 @@ public:
   esp_err_t init();
 
   /**
+   * @brief Deinitialize the BLE module.
+   *
+   * Stops advertising, disconnects all peers, and tears down the NimBLE stack.
+   * After calling this the module cannot be re-initialized without a reboot.
+   * @return ESP_OK on success.
+   */
+  esp_err_t deinit();
+
+  /**
    * @brief Apply a new configuration before init() is called.
    *        Must not be called after init().
    * @param config New configuration to apply

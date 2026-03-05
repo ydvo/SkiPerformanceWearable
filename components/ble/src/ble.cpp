@@ -23,6 +23,19 @@ BleModule::~BleModule() {
   }
 }
 
+esp_err_t BleModule::deinit() {
+  if (!initialized_)
+    return ESP_OK;
+
+  stop_advertising();
+  ble_gatt_server_.disconnect_all();
+  vTaskDelay(pdMS_TO_TICKS(100)); // allow disconnect PDU to propagate
+  ble_gatt_server_.deinit();
+  initialized_ = false;
+  ESP_LOGI(TAG, "BLE module deinitialized");
+  return ESP_OK;
+}
+
 esp_err_t BleModule::init() {
   if (initialized_)
     return ESP_OK;
