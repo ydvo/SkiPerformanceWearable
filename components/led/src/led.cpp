@@ -27,3 +27,11 @@ esp_err_t led::turn_off() {
   ESP_LOGI(TAG, "LED OFF");
   return led_.setLevel(LED_OFF);
 }
+
+esp_err_t led::toggle() {
+  if (led_.getLevel()) {
+    return led_.setLevel(LED_OFF);
+  } else {
+    return led_.setLevel(LED_ON); 
+  }
+}

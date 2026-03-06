@@ -1,5 +1,7 @@
-/* powerstats.hpp
- *  - track and monitor power stats
+/**
+ * @file powerstats.hpp
+ * @ingroup power
+ * @brief Track and monitor power statistics.
  */
 
 #pragma once

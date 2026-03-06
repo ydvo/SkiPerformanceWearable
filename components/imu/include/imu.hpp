@@ -1,3 +1,12 @@
+/**
+ * @file imu.hpp
+ * @ingroup sensors
+ * @brief IMU wrapper using ICM‑20948 and Madgwick filter.
+ *
+ * Provides a high‑level interface to the ICM‑20948 9‑axis sensor. Handles
+ * initialization, raw data acquisition, magnetometer calibration, and orientation
+ * estimation via a Madgwick quaternion filter.
+ */
 #pragma once
 
 #include "i2c.hpp"
@@ -15,6 +24,17 @@ namespace SENSORS {
 /* Constants */
 
 /* Imu */
+/**
+ * @brief High‑level IMU driver.
+ *
+ * Wraps an `espp::Icm20948` instance and a `MadgwickFilterQuat` to provide
+ * calibrated raw sensor data and filtered orientation (quaternion and Euler
+ * angles). Supports optional magnetometer usage with hard‑iron and soft‑iron
+ * calibration.
+ *
+ * Thread‑safety: methods are not internally synchronized; callers should ensure
+ * exclusive access when used from multiple FreeRTOS tasks.
+ */
 class Imu {
 public:
   /* Vars */
@@ -46,46 +66,98 @@ public:
       espp::icm20948::GyroscopeFilterBandwidth::BW_11_HZ};
 
   /* Structs */
+  /**
+   * @brief 3‑axis vector of float values.
++   *
++   * Used for accelerometer, gyro, and magnetometer data after scaling to
++   * physical units.
++   */
   struct Value {
-    float x{};
-    float y{};
-    float z{};
+    float x{}; ///< X component.
+    float y{}; ///< Y component.
+    float z{}; ///< Z component.
   };
 
+  /**
+   * @brief Quaternion representing orientation.
++   *
++   * The filter outputs a unit quaternion (w, x, y, z).
++   */
   struct Quaternion {
-    float w{};
-    float x{};
-    float y{};
-    float z{};
+    float w{}; ///< Scalar component.
+    float x{}; ///< X vector component.
+    float y{}; ///< Y vector component.
+    float z{}; ///< Z vector component.
   };
 
+  /**
+   * @brief Euler angles (degrees) derived from quaternion.
++   *
++   * Pitch rotates about X, roll about Y, yaw about Z.
++   */
   struct Euler {
-    float pitch{}; // degrees, rotation about X
-    float roll{};  // degrees, rotation about Y
-    float yaw{};   // degrees, rotation about Z
+    float pitch{}; ///< Rotation about X axis (degrees).
+    float roll{};  ///< Rotation about Y axis (degrees).
+    float yaw{};   ///< Rotation about Z axis (degrees).
   };
 
+  /**
+   * @brief Raw sensor readings before any calibration.
++   *
++   * Accelerometer, gyroscope, and magnetometer values are in sensor units; the
++   * temperature is in degrees Celsius.
++   */
   struct Raw {
-    espp::icm20948::Value accel{};
-    espp::icm20948::Value gyro{};
-    espp::icm20948::Value mag{};
-    float temperature{};
+    espp::icm20948::Value accel{}; ///< Accelerometer raw data.
+    espp::icm20948::Value gyro{};  ///< Gyroscope raw data.
+    espp::icm20948::Value mag{};   ///< Magnetometer raw data.
+    float temperature{};           ///< Temperature in °C.
   };
 
   /* Methods */
 
   // Constructor
+  /**
+   * @brief Construct an Imu using an I2C bus.
++   *
++   * @param i2c Reference to an initialized `espp::I2c` instance.
++   */
   explicit Imu(espp::I2c &i2c);
 
+  /**
+   * @brief Construct an Imu with a pre‑configured ICM‑20948 configuration.
++   *
++   * @param cfg Configuration struct for the underlying `espp::Icm20948` driver.
++   */
   explicit Imu(ICM::Config cfg);
 
   // initialize
+  /**
+   * @brief Initialize the IMU hardware.
++   *
++   * Performs sensor reset, configures low‑pass filters, and enables the device.
++   * Must be called before any data acquisition.
++   * @return true on success, false on error.
++   */
   bool init();
 
   // whoami
+  /**
+   * @brief Read the WHO_AM_I register.
++   *
++   * @return Device identifier byte.
++   */
   uint8_t get_whoami();
 
   // Update IMU with timestep dt (s), returns true if successful
+  /**
+   * @brief Update raw sensor readings.
++   *
++   * Reads accelerometer, gyroscope, magnetometer and temperature into the
++   * internal `raw_` structure.
++   * @param dt Time step in seconds.
++   * @return true on successful read, false otherwise.
++   */
   bool update_raw(float dt);
   bool update(float dt);
 
@@ -123,6 +195,12 @@ public:
   void set_mag_soft_iron_bias(double A[3][3]) {
     memcpy(A_, A, sizeof(A_));
   }
+
+  /** @brief Put the ICM-20948 into hardware sleep mode (~8 uA). */
+  esp_err_t sleep();
+
+  /** @brief Wake the ICM-20948 from hardware sleep mode. */
+  esp_err_t wake();
 
 private:
   Value apply_mag_cal(espp::icm20948::Value raw); // helper function to apply magnetomer calibration

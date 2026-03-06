@@ -1,3 +1,10 @@
+/**
+ * @file flash.cpp - SPI flash device implementation.
+ *
+ * Implements the `SpiFlashDevice` class methods for initializing the device,
+ * performing bounds‑checked reads/writes, and erasing sectors or the entire
+ * chip.
+ */
 #include "flash.hpp"
 #include "flash_log.hpp"
 #include "imu.hpp"

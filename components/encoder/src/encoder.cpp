@@ -1,5 +1,10 @@
-/* encoder.cpp
- *  - Quadrature rotary encoder driver using lookup table decoding
+/**
+ * @file encoder.cpp - Quadrature rotary encoder driver implementation.
+ *
+ * Provides the ISR and runtime functions for the `SENSORS::Encoder` class.
+ * Uses a static lookup table stored in DRAM for fast decoding of quadrature
+ * transitions. All ISR work is performed in IRAM and updates an atomic tick
+ * counter.
  */
 
 #include "encoder.hpp"
@@ -13,9 +18,13 @@ namespace SENSORS {
 
 static const char *TAG = "Encoder";
 
-// Lookup table for quadrature decoding
-// Indexed by (prev_AB << 2 | curr_AB), yields direction:
-//   +1 = CW step, -1 = CCW step, 0 = no movement or invalid
+/**
+ * @brief Quadrature decoding lookup table.
+ *
+ * Indexed by `(prev_AB << 2) | curr_AB` where each nibble encodes the previous
+ * and current A/B states. The table returns `+1` for a clockwise step, `-1`
+ * for a counter‑clockwise step, and `0` for no movement or an invalid transition.
+ */
 static const int8_t DRAM_ATTR lookup_table[] = {
     0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0,
 };

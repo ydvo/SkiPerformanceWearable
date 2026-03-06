@@ -1,3 +1,13 @@
+/**
+ * @file ble.hpp
+ * @ingroup communication
+ * @brief BLE module interface and GATT service definitions.
+ *
+ * Provides a NimBLE‑based GATT server exposing a custom Quaternion
+ * service for streaming IMU data, battery level characteristic, and an
+ * ACK characteristic used by the host to acknowledge received frames.
+ * All structures are packed to match the BLE packet layout.
+ */
 #pragma once
 
 #include "ble_gatt_server.hpp"
@@ -16,6 +26,13 @@ namespace BLE {
 
 constexpr size_t SAMPLES_PER_FRAME = 8;
 
+/**
+ * @brief Header for a BLE data frame.
+ *
+ * Contains sequence number, sample count, payload length in bytes, and
+ * flags for future extensions. All fields are 16‑bit little‑endian as per
+ * BLE GATT specification.
+ */
 struct __attribute__((packed)) FrameHeader {
   uint16_t frame_seq;
   uint16_t sample_count;
@@ -23,6 +40,12 @@ struct __attribute__((packed)) FrameHeader {
   uint16_t flags;
 };
 
+/**
+ * @brief Single quaternion sample transmitted over BLE.
+ *
+ * `timestamp` is a 64‑bit microsecond value obtained from `esp_timer_get_time()`.
+ * Quaternion components are stored as 32‑bit floats in order (w, x, y, z).
+ */
 struct __attribute__((packed)) FrameSample {
   uint64_t timestamp;
   float w;
@@ -31,11 +54,23 @@ struct __attribute__((packed)) FrameSample {
   float z;
 };
 
+/**
+ * @brief BLE notification frame containing a header and an array of quaternion samples.
+ *
+ * The payload size is limited to `SAMPLES_PER_FRAME` entries to fit within a
+ * single BLE notification (max 244 bytes with current packing).
+ */
 struct __attribute__((packed)) Frame {
   FrameHeader header;
   FrameSample payload[SAMPLES_PER_FRAME];
 };
 
+/**
+ * @brief ACK payload sent by the central device.
+ *
+ * Contains the `frame_seq` of the last successfully received frame. The
+ * peripheral uses this to confirm transmission before sending the next batch.
+ */
 struct __attribute__((packed)) Ack {
   uint16_t frame_seq;
 };
@@ -44,40 +79,60 @@ static_assert(sizeof(FrameSample) == 24, "Frame sample expected to be 24 bytes p
 static_assert(sizeof(FrameHeader) == 8, "Frame header expected to be 8 bytes packed.");
 static_assert(sizeof(Frame) <= 244, "Frame size expected to fit into 1 notify packet.");
 
-/* BLE Module Class */
+/**
+ * @brief High‑level BLE peripheral manager.
+ *
+ * Wraps a NimBLE GATT server exposing a custom Quaternion service for streaming
+ * orientation data, a battery level characteristic, and an ACK characteristic to
+ * provide reliable transfer semantics. Handles advertising, connection callbacks,
+ * security configuration, and log level control.
+ */
 class BleModule {
 public:
   /* Configuration structure */
-  struct Config {
-    // Device info
-    std::string device_name{"Ski Performance Wearable"};
-    std::string manufacturer_name{"ESP-CPP"};
-    std::string model_number{"ski-wearable-01"};
-    std::string serial_number{"0000000001"};
-    std::string software_version{"1.0.0"};
-    std::string firmware_version{"1.0.0"};
-    std::string hardware_version{"1.0.0"};
+   /**
+    * @brief Configuration parameters for the BLE module.
+    *
+    * All fields have sensible defaults; modify as needed before calling
+    * `init()`. Callback members may be left empty if not required.
+    */
+   struct Config {
+     // Device info
+     std::string device_name{"Ski Performance Wearable"};      ///< Local device name advertised.
+     std::string manufacturer_name{"ESP-CPP"};                ///< Manufacturer string for PnP ID.
+     std::string model_number{"ski-wearable-01"};            ///< Model identifier.
+     std::string serial_number{"0000000001"};                ///< Unique serial number.
+     std::string software_version{"1.0.0"};                  ///< Software version string.
+     std::string firmware_version{"1.0.0"};                  ///< Firmware version string.
+     std::string hardware_version{"1.0.0"};                  ///< Hardware revision string.
 
-    bool bonding{true};
-    bool mitm{false};
-    bool secure_connections{true};
-    uint32_t passkey{123456};
-    uint8_t io_capabilities{BLE_HS_IO_NO_INPUT_OUTPUT};
-    uint8_t init_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
-    uint8_t resp_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID};
-    espp::Logger::Verbosity log_level{espp::Logger::Verbosity::INFO};
+     bool bonding{true};                                        ///< Enable pairing bonding.
+     bool mitm{false};                                          ///< Man‑in‑the‑middle protection flag.
+     bool secure_connections{true};                             ///< Use BLE Secure Connections.
+     uint32_t passkey{123456};                                   ///< Numeric passkey for pairing.
+     uint8_t io_capabilities{BLE_HS_IO_NO_INPUT_OUTPUT};        ///< IO capabilities for pairing.
+     uint8_t init_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID}; ///< Key distribution from initiator.
+     uint8_t resp_key_dist{BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID}; ///< Key distribution from responder.
+     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::INFO}; ///< Log verbosity for BLE module.
 
-    // PnP ID
-    uint8_t vendor_source{0x01};
-    uint16_t vendor_id{0xCafe};
-    uint16_t product_id{0xFace};
-    uint16_t product_version{0x0100};
+     // PnP ID
+     uint8_t vendor_source{0x01};                               ///< Vendor source (0x01 = Bluetooth SIG).
+     uint16_t vendor_id{0xCafe};                                 ///< Vendor ID assigned by SIG.
+     uint16_t product_id{0xFace};                                ///< Product ID.
+     uint16_t product_version{0x0100};                           ///< Product version.
 
-    // Callbacks
-    std::function<void(NimBLEConnInfo &)> on_connect;
-    std::function<void(NimBLEConnInfo &, espp::BleGattServer::DisconnectReason)> on_disconnect;
-    std::function<void(const NimBLEConnInfo &)> on_authenticated;
-  };
+     // Callbacks
+     std::function<void(NimBLEConnInfo &)> on_connect;          ///< Invoked on BLE connection.
+     std::function<void(NimBLEConnInfo &, espp::BleGattServer::DisconnectReason)> on_disconnect; ///< Invoked on BLE disconnection.
+     std::function<void(const NimBLEConnInfo &)> on_authenticated; ///< Invoked after authentication.
+     /**
+      * @brief Invoked when the central writes to the control characteristic.
+      *
+      * The argument is the command byte received:
+      *   - 0x01 : toggle recording (start if idle, stop if running)
+      */
+     std::function<void(uint8_t cmd)> on_control_command;      ///< Invoked on control characteristic write.
+   };
 
   /**
    * @brief Constructor with configuration
@@ -100,6 +155,15 @@ public:
    * @return true if successful, false otherwise
    */
   esp_err_t init();
+
+  /**
+   * @brief Deinitialize the BLE module.
+   *
+   * Stops advertising, disconnects all peers, and tears down the NimBLE stack.
+   * After calling this the module cannot be re-initialized without a reboot.
+   * @return ESP_OK on success.
+   */
+  esp_err_t deinit();
 
   /**
    * @brief Apply a new configuration before init() is called.
@@ -176,6 +240,16 @@ public:
   /** Send a quaternion notification. */
   esp_err_t notify_quaternion(const uint8_t *payload, size_t len);
 
+  /**
+   * @brief Notify the central that all flash data has been uploaded.
+   *
+   * Writes 0x01 to the upload-status characteristic and sends a BLE
+   * notification. The central should subscribe to this characteristic
+   * (enable CCCD) to receive the event. Returns ESP_ERR_INVALID_STATE if
+   * BLE is not connected or the characteristic is not initialized.
+   */
+  esp_err_t notify_upload_complete();
+
   /** Returns true if a connected client has enabled notifications on the quat char. */
   bool quat_notify_enabled() const;
 
@@ -218,11 +292,22 @@ private:
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
   };
 
+  class ControlCharCallbacks : public NimBLECharacteristicCallbacks {
+    BleModule *parent_;
+
+  public:
+    explicit ControlCharCallbacks(BleModule *parent) : parent_(parent) {};
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override;
+  };
+
   NimBLECharacteristic *quat_char_ = nullptr;
   NimBLECharacteristic *ack_char_ = nullptr;
+  NimBLECharacteristic *ctrl_char_ = nullptr;
+  NimBLECharacteristic *status_char_ = nullptr;
 
   QuatCCCDCallbacks quat_cccd_cb_{this};
   AckCharCallbacks quat_ack_cb_{this};
+  ControlCharCallbacks ctrl_cb_{this};
 
   std::atomic<bool> quat_notifications_enabled_{false};
 

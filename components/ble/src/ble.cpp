@@ -9,6 +9,8 @@ static const char *TAG = "BLE";
 static const NimBLEUUID QUAT_SVC_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f700"};
 static const NimBLEUUID QUAT_CHAR_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f701"};
 static const NimBLEUUID QUAT_ACK_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f702"};
+static const NimBLEUUID QUAT_CTRL_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f703"};
+static const NimBLEUUID QUAT_STATUS_UUID{"16fd3a8f-f37e-4155-8ebf-654df4d3f704"};
 
 BleModule::BleModule() : config_(), battery_level_(100), initialized_(false) {}
 
@@ -19,6 +21,19 @@ BleModule::~BleModule() {
   if (initialized_) {
     ble_gatt_server_.deinit();
   }
+}
+
+esp_err_t BleModule::deinit() {
+  if (!initialized_)
+    return ESP_OK;
+
+  stop_advertising();
+  ble_gatt_server_.disconnect_all();
+  vTaskDelay(pdMS_TO_TICKS(100)); // allow disconnect PDU to propagate
+  ble_gatt_server_.deinit();
+  initialized_ = false;
+  ESP_LOGI(TAG, "BLE module deinitialized");
+  return ESP_OK;
 }
 
 esp_err_t BleModule::init() {
@@ -299,6 +314,46 @@ esp_err_t BleModule::init_quat_service() {
   ackUserDescriptor->setValue("Acknowledgement (WRITE Ack struct with frame_seq)");
   ESP_LOGI(TAG, "ACK User Description set");
 
+  ESP_LOGI(TAG, "Creating control characteristic");
+  ctrl_char_ = svc->createCharacteristic(QUAT_CTRL_UUID,
+                                         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+
+  ESP_RETURN_ON_FALSE(ctrl_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create control characteristic");
+
+  ctrl_char_->setCallbacks(&ctrl_cb_);
+  ESP_LOGI(TAG, "Control characteristic created");
+
+  NimBLEDescriptor *ctrlUserDescriptor =
+      ctrl_char_->createDescriptor(NimBLEUUID((uint16_t)0x2901), NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(ctrlUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create control user descriptor");
+
+  ctrlUserDescriptor->setValue("Control (WRITE: 0x01=toggle recording)");
+  ESP_LOGI(TAG, "Control User Description set");
+
+  ESP_LOGI(TAG, "Creating upload status characteristic");
+  status_char_ = svc->createCharacteristic(QUAT_STATUS_UUID,
+                                           NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(status_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create upload status characteristic");
+
+  // Initialise to 0x00 (not complete)
+  static const uint8_t STATUS_IDLE = 0x00;
+  status_char_->setValue(&STATUS_IDLE, 1);
+  ESP_LOGI(TAG, "Upload status characteristic created");
+
+  NimBLEDescriptor *statusUserDescriptor =
+      status_char_->createDescriptor(NimBLEUUID((uint16_t)0x2901), NIMBLE_PROPERTY::READ);
+
+  ESP_RETURN_ON_FALSE(statusUserDescriptor != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to create status user descriptor");
+
+  statusUserDescriptor->setValue("Upload Status (NOTIFY 0x01 when flash fully drained)");
+  ESP_LOGI(TAG, "Upload Status User Description set");
+
   ESP_LOGI(TAG, "Starting service");
   svc->start();
   ESP_LOGI(TAG, "Quaternion service started");
@@ -320,6 +375,23 @@ esp_err_t BleModule::notify_quaternion(const uint8_t *payload, size_t len) {
 
   ESP_LOGD(TAG, "notify_quaternion: sent %u bytes", (unsigned)len);
 
+  return ESP_OK;
+}
+
+esp_err_t BleModule::notify_upload_complete() {
+  ESP_RETURN_ON_FALSE(status_char_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                      "Upload status characteristic is not initialized");
+
+  ESP_RETURN_ON_FALSE(is_connected(), ESP_ERR_INVALID_STATE, TAG,
+                      "BLE not connected, cannot send upload-complete notification");
+
+  static const uint8_t STATUS_DONE = 0x01;
+  status_char_->setValue(&STATUS_DONE, 1);
+
+  ESP_RETURN_ON_FALSE(status_char_->notify(), ESP_ERR_INVALID_STATE, TAG,
+                      "Failed to notify upload-complete status");
+
+  ESP_LOGI(TAG, "notify_upload_complete: sent");
   return ESP_OK;
 }
 
@@ -436,6 +508,33 @@ void BleModule::AckCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic,
   parent_->ack_armed_.store(false, std::memory_order_relaxed);
   parent_->ack_received_.store(true, std::memory_order_release);
   ESP_LOGI(TAG, "ACK onWrite: ACK seq=%u accepted", (unsigned)ack.frame_seq);
+}
+
+/* ----------------------------------------------------------------
+ *  Control write callback – central sends recording commands
+ * ---------------------------------------------------------------- */
+void BleModule::ControlCharCallbacks::onWrite(NimBLECharacteristic *pCharacteristic,
+                                              NimBLEConnInfo &connInfo) {
+  ESP_RETURN_VOID_ON_FALSE(pCharacteristic != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                           "Failed control onWrite due to null characteristic");
+
+  ESP_RETURN_VOID_ON_FALSE(parent_ != nullptr, ESP_ERR_INVALID_STATE, TAG,
+                           "Failed control onWrite due to null parent");
+
+  std::string raw = pCharacteristic->getValue();
+  if (raw.empty()) {
+    ESP_LOGW(TAG, "Control onWrite: empty payload – ignoring");
+    return;
+  }
+
+  uint8_t cmd = static_cast<uint8_t>(raw[0]);
+  ESP_LOGI(TAG, "Control onWrite: cmd=0x%02x", (unsigned)cmd);
+
+  if (parent_->config_.on_control_command) {
+    parent_->config_.on_control_command(cmd);
+  } else {
+    ESP_LOGW(TAG, "Control onWrite: no handler registered");
+  }
 }
 
 } // namespace BLE

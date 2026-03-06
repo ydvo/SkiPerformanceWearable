@@ -1,5 +1,7 @@
 build/
 managed_components/
+docs/html/
+docs/latex/
 test_scripts/
 !test_scripts/*.py
 
