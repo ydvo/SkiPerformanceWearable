@@ -142,6 +142,9 @@ static constexpr uint32_t FSR_POLL_INTERVAL_MS{50};
 /** @brief RTP intensity value (0-255) for haptic feedback when threshold exceeded. */
 static constexpr uint8_t FSR_HAPTIC_RTP_VALUE{127};
 
+/** @brief Maximum duration (ms) for continuous haptic warning before auto-stop. */
+static constexpr uint32_t FSR_HAPTIC_MAX_DURATION_MS{4000};
+
 /** @brief Delay before calibration phase starts (ms). */
 static constexpr uint32_t CAL_PHASE_DELAY_MS{3000};
 
@@ -177,6 +180,9 @@ static constexpr uint8_t EVENT_QUEUE_LENGTH{8};
 
 /** @brief Length of haptic event queue (number of entries). */
 static constexpr uint8_t HAPTIC_QUEUE_LENGTH{4};
+
+/** @brief Number of samples to take when calibrating force sensor threshuld */
+static constexpr float NUM_SAMPLES_CALIBRATION{10.0};
 
 /*! @brief Haptic event identifiers for the DRV2605L driver.
  *
@@ -675,6 +681,8 @@ void hapticTask(void *arg) {
  */
 void fsrTask(void *arg) {
   bool warning_active = false;
+  bool warning_timed_out = false;
+  TickType_t warning_start_tick{0};
 
   for (;;) {
     // Block until RUNNING state
@@ -683,22 +691,36 @@ void fsrTask(void *arg) {
 
     while (xEventGroupGetBits(system_state) & static_cast<EventBits_t>(SystemState::RUNNING)) {
       float voltage = pressure_sensor.read();
-      printf("%f\n", voltage);
+      // printf("%f\n", voltage);
       bool exceeded = pressure_sensor.is_pressed();
 
-      if (exceeded && !warning_active) {
+      if (exceeded && !warning_active && !warning_timed_out) {
         // Threshold crossed -- switch to realtime playback and buzz
         logger.info("FSR: threshold exceeded ({:.1f} mV), activating warning", voltage);
         haptic.set_mode(HAPTICS::DRV2605L::Mode::REALTIME_PLAYBACK);
         haptic.set_realtime_value(FSR_HAPTIC_RTP_VALUE);
         warning_active = true;
+        warning_start_tick = xTaskGetTickCount();
 
-      } else if (!exceeded && warning_active) {
+      } else if (!exceeded && (warning_active || warning_timed_out)) {
         // Pressure dropped below threshold -- stop buzzing and restore mode
-        logger.info("FSR: pressure released ({:.1f} mV), deactivating warning", voltage);
+        if (warning_active) {
+          logger.info("FSR: pressure released ({:.1f} mV), deactivating warning", voltage);
+          haptic.set_realtime_value(0);
+          haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
+        }
+        warning_active = false;
+        warning_timed_out = false;
+      }
+
+      // Auto-stop warning after maximum duration to avoid prolonged buzzing
+      if (warning_active &&
+          (xTaskGetTickCount() - warning_start_tick) >= pdMS_TO_TICKS(FSR_HAPTIC_MAX_DURATION_MS)) {
+        logger.info("FSR: warning timed out after {}ms, deactivating", FSR_HAPTIC_MAX_DURATION_MS);
         haptic.set_realtime_value(0);
         haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
         warning_active = false;
+        warning_timed_out = true;
       }
 
       vTaskDelay(pdMS_TO_TICKS(FSR_POLL_INTERVAL_MS));
@@ -710,6 +732,7 @@ void fsrTask(void *arg) {
       haptic.set_mode(HAPTICS::DRV2605L::Mode::INTERNAL_TRIGGER);
       warning_active = false;
     }
+    warning_timed_out = false;
   }
 }
 
@@ -718,9 +741,9 @@ void fsrTask(void *arg) {
  * @brief FreeRTOS task that guides the user through FSR calibration.
  *
  * The task runs when the system enters the CALIBRATING state. It uses haptic
- * feedback to prompt the user for baseline (no pressure) and max‑pressure steps,
- * then computes a pressure threshold based on `FSR_THRESHOLD_PERCENT` and stores
- * it in the sensor instance. Upon completion it notifies the control task.
+ * feedback to prompt the user to assume minimum leang angle they want to be notified at.
+ * It proceeds to take NUM_SAMPLES_CALIBRATION samples and average them to set the fsr threshold.
+ * Upon completion it notifies the control task.
  *
  * @param arg Unused task argument.
  */
@@ -730,28 +753,18 @@ void calibrationTask(void *arg) {
     xEventGroupWaitBits(system_state, static_cast<EventBits_t>(SystemState::CALIBRATING), false,
                         true, portMAX_DELAY);
 
-    // Phase 1: Baseline (no pressure)
+    // Notify and start reading values
     haptic_notify(HapticEvent::CAL_START);
-    logger.info("Calibration: release pressure from FSR...");
+    logger.info("Calibration: Lean to minimum angle");
     vTaskDelay(pdMS_TO_TICKS(CAL_PHASE_DELAY_MS));
+    float sum = 0;
+    for (uint8_t i = 0; i < NUM_SAMPLES_CALIBRATION; i++) {
+      sum += pressure_sensor.read();
+    }
+    float threshold = sum / NUM_SAMPLES_CALIBRATION;
 
-    pressure_sensor.calibrate_baseline();
-    logger.info("Calibration: baseline = {:.1f} mV", pressure_sensor.get_baseline());
-
-    // Phase 2: Max pressure
-    haptic_notify(HapticEvent::CAL_PHASE_TWO);
-    logger.info("Calibration: apply full pressure to FSR...");
-    vTaskDelay(pdMS_TO_TICKS(CAL_PHASE_DELAY_MS));
-
-    pressure_sensor.calibrate_max();
-    logger.info("Calibration: max = {:.1f} mV", pressure_sensor.get_max());
-
-    // Compute and set threshold
-    // float threshold =
-    //     pressure_sensor.get_baseline() +
-    //     (pressure_sensor.get_max() - pressure_sensor.get_baseline()) * FSR_THRESHOLD_PERCENT;
-    pressure_sensor.set_pressure_threshold(FSR_THRESHOLD_MV);
-    logger.info("Calibration: threshold set to {:.1f} mV", FSR_THRESHOLD_MV);
+    pressure_sensor.set_pressure_threshold(threshold);
+    logger.info("Calibration: threshold set to {:.1f} mV", threshold);
 
     // Signal completion
     haptic_notify(HapticEvent::CAL_COMPLETE);
@@ -1225,7 +1238,7 @@ esp_err_t initSystem() {
   pressure_sensor.set_calibration(FSR_LOW, FSR_HIGH);
 
   // set pressure threshold at 50% of calibrated range
-  float fsr_threshold = FSR_LOW + (FSR_HIGH - FSR_LOW) * 0.5f;
+  float fsr_threshold = FSR_THRESHOLD_MV;
   pressure_sensor.set_pressure_threshold(fsr_threshold);
   logger.info("FSR threshold set to {:.1f} mV", fsr_threshold);
 
@@ -1352,8 +1365,6 @@ extern "C" void app_main() {
   if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
     ESP_LOGI("MAIN", "Woke from deep sleep -- validating button hold");
 
-    // Turn on LED while waiting for the user to hold the button
-    green_led.turn_on();
     uint32_t held_ms = 0;
     bool confirmed = true;
     while (held_ms < WAKE_HOLD_MS) {
@@ -1368,7 +1379,6 @@ extern "C" void app_main() {
 
     if (!confirmed) {
       ESP_LOGI("MAIN", "Button released early -- returning to deep sleep");
-      green_led.turn_off();
       esp_sleep_enable_ext1_wakeup(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ANY_LOW);
       esp_deep_sleep_start();
       // does not return
