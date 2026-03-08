@@ -109,10 +109,13 @@ namespace STORAGE {
   esp_err_t FlashLog<T>::flush(const std::array<Sample, SAMPLES_PER_FRAME> &payload,
                                uint32_t addr, uint32_t seq_num) {
     if (addr % dev_.sector_size() == 0) {
-      ESP_RETURN_ON_ERROR(
-        erase_sector(addr),
-        TAG, "Failed to erase the region before writing."
-      );
+      erase_in_progress_.store(true, std::memory_order_release);
+      esp_err_t err = erase_sector(addr);
+      erase_in_progress_.store(false, std::memory_order_release);
+      if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase the region before writing.");
+        return err;
+      }
     }
 
     Frame frame {};
@@ -159,13 +162,21 @@ namespace STORAGE {
     uint32_t snap_write = write_addr_;
     xSemaphoreGive(mutex_);
 
-    // Limit invalid-frame skips per call to one sector's worth of frames.
-    // This prevents the read from blocking for seconds scanning erased regions
-    // while the flash writer holds the SPI bus for a sector erase.
-    const size_t max_skip = dev_.sector_size() / sizeof(Frame);
+    // Limit invalid-frame skips per call to a small fixed number as a safety
+    // net for flash corruption. In normal operation there should be no invalid
+    // frames in the [read_addr, write_addr) range.
+    constexpr size_t max_skip = 8;
     size_t skipped = 0;
 
     while (*frames_read < max_frames && cur_read != snap_write && skipped < max_skip) {
+      // Bail immediately if a sector erase is in progress on the SPI bus.
+      // The esp_flash driver serialises internally, so dev_.read() would block
+      // for the entire erase duration (up to seconds on slow chips).
+      // The caller retries after UPLOAD_RETRY_DELAY_MS.
+      if (erase_in_progress_.load(std::memory_order_acquire)) {
+        break;
+      }
+
       Frame frame{};
       esp_err_t err = dev_.read(cur_read, &frame, sizeof(Frame));
       if (err != ESP_OK) {

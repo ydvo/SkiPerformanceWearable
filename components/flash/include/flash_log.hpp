@@ -12,6 +12,7 @@
 #include "flash.hpp"
 #include "imu.hpp"
 #include "freertos/semphr.h"
+#include <atomic>
 
 namespace STORAGE {
 
@@ -142,6 +143,7 @@ private:
 
   STORAGE::SpiFlashDevice &dev_;
   mutable SemaphoreHandle_t mutex_{nullptr};
+  std::atomic<bool> erase_in_progress_{false};
 
   uint32_t compute_crc(const Frame &frame) const;
   bool valid(const Frame &frame) const;
