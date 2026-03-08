@@ -11,6 +11,7 @@
 #pragma once
 #include "flash.hpp"
 #include "imu.hpp"
+#include "freertos/semphr.h"
 
 namespace STORAGE {
 
@@ -140,14 +141,15 @@ private:
   uint32_t sample_idx_{0}; 
 
   STORAGE::SpiFlashDevice &dev_;
+  mutable SemaphoreHandle_t mutex_{nullptr};
 
-  uint32_t compute_crc(const Frame &frame) const; 
-  bool valid(const Frame &frame) const; 
+  uint32_t compute_crc(const Frame &frame) const;
+  bool valid(const Frame &frame) const;
 
   uint32_t next_addr(uint32_t addr) const;
   bool would_overrun(uint32_t next_write) const;
 
   esp_err_t erase_sector(uint32_t addr);
-  esp_err_t flush(const std::array<Sample, SAMPLES_PER_FRAME>& payload); 
+  esp_err_t flush(const std::array<Sample, SAMPLES_PER_FRAME>& payload, uint32_t addr, uint32_t seq_num);
 }; 
 }

@@ -69,7 +69,7 @@ static constexpr auto flash_spi_cs{GPIO_NUM_10};
 // ---------------------------------------------------------------------
 
 // Logging
-espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::INFO});
+espp::Logger logger({.tag = "MAIN", .level = espp::Logger::Verbosity::DEBUG});
 
 // I2C
 espp::I2c i2c({
