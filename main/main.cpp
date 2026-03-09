@@ -1082,6 +1082,7 @@ void controlTask(void *arg) {
         // on run start, start collecting data
         switch (e) {
         case Event::TOGGLE_RUN:
+          flash_log.init(); // reset pointers so each run starts with an empty log
           startSensors();
           switch_states(SystemState::READY, SystemState::RUNNING);
           haptic_notify(HapticEvent::RUN_START);
@@ -1132,9 +1133,14 @@ void controlTask(void *arg) {
           break;
 
         case Event::BLE_DISCONNECTED:
+          // Keep recording — re-advertise so the phone can reconnect.
+          // The upload task will pause automatically until BLE is back.
           advertiseBLE();
-          switch_states(SystemState::RUNNING, SystemState::IDLE);
           haptic_notify(HapticEvent::BLE_DISCONNECT);
+          break;
+
+        case Event::BLE_CONNECTED:
+          haptic_notify(HapticEvent::BLE_CONNECT);
           break;
 
         default:
