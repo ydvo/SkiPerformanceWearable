@@ -490,7 +490,7 @@ void uploadTask(void *arg) {
 
         size_t payload_bytes = sizeof(BLE::FrameHeader) + ble_frame.header.payload_len;
 
-        logger.info("Upload: sending frame seq={} samples={} offset={} payload_bytes={}",
+        logger.debug("Upload: sending frame seq={} samples={} offset={} payload_bytes={}",
                     (uint16_t)ble_frame.header.frame_seq, (uint16_t)ble_frame.header.sample_count,
                     (uint32_t)samples_sent_from_frame, (uint32_t)payload_bytes);
 
@@ -503,14 +503,23 @@ void uploadTask(void *arg) {
                       (int)notify_err, UPLOAD_RETRY_DELAY_MS);
           vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
         } else {
-          // Arm the ACK wait
-          ble.arm_ack(ble_frame.header.frame_seq);
+          // Only ACK the last sub-frame of each flash frame to halve round-trips.
+          // Non-last sub-frames are sent fire-and-forget; the app ACKs only the
+          // last one, which also implicitly confirms all preceding sub-frames.
+          size_t next_samples = samples_sent_from_frame + ble_frame.header.sample_count;
+          bool is_last_subframe = (next_samples >= STORAGE::SAMPLES_PER_FRAME);
 
-          logger.debug("Upload: notification sent, armed ACK wait for seq={}",
-                       (uint16_t)ble_frame.header.frame_seq);
-
-          upload_state = UploadState::WAIT_FOR_ACK;
-          ble_ack_start = esp_timer_get_time();
+          if (is_last_subframe) {
+            ble.arm_ack(ble_frame.header.frame_seq);
+            logger.debug("Upload: notification sent, armed ACK wait for seq={}",
+                         (uint16_t)ble_frame.header.frame_seq);
+            upload_state = UploadState::WAIT_FOR_ACK;
+            ble_ack_start = esp_timer_get_time();
+          } else {
+            // Advance and send next sub-frame immediately without waiting for ACK.
+            samples_sent_from_frame = next_samples;
+            upload_state = UploadState::INITIALIZE_BLE_FRAME;
+          }
         }
 
         break;
@@ -532,26 +541,16 @@ void uploadTask(void *arg) {
         break;
       }
       case UploadState::RECEIVED_ACK: {
+        // RECEIVED_ACK is only reached for the last sub-frame of a flash frame.
         logger.info("Upload: ACK received for seq={} after {:.1f}ms",
                     (uint16_t)ble_frame.header.frame_seq, (float)ack_wait_us / 1000.0f);
 
-        // Advance send position
         samples_sent_from_frame += ble_frame.header.sample_count;
+        total_frames_sent++;
+        logger.info("Upload: flash frame seq={} fully transmitted (total frames sent={})",
+                    (uint32_t)flash_frame.seq, total_frames_sent);
 
-        logger.debug("Upload: frame seq={} progress {}/{} samples",
-                     (uint16_t)ble_frame.header.frame_seq, (uint32_t)samples_sent_from_frame,
-                     (uint32_t)STORAGE::SAMPLES_PER_FRAME);
-
-        if (samples_sent_from_frame >= STORAGE::SAMPLES_PER_FRAME) {
-          total_frames_sent++;
-          logger.info("Upload: flash frame seq={} fully transmitted (total frames sent={})",
-                      (uint32_t)flash_frame.seq, total_frames_sent);
-
-          upload_state = UploadState::BUFFER_FLASH_FRAME;
-        } else {
-          upload_state = UploadState::INITIALIZE_BLE_FRAME;
-        }
-
+        upload_state = UploadState::BUFFER_FLASH_FRAME;
         break;
       }
       case UploadState::TIMEOUT_ACK: {
@@ -1083,6 +1082,7 @@ void controlTask(void *arg) {
         // on run start, start collecting data
         switch (e) {
         case Event::TOGGLE_RUN:
+          flash_log.init(); // reset pointers so each run starts with an empty log
           startSensors();
           switch_states(SystemState::READY, SystemState::RUNNING);
           haptic_notify(HapticEvent::RUN_START);
@@ -1133,9 +1133,14 @@ void controlTask(void *arg) {
           break;
 
         case Event::BLE_DISCONNECTED:
+          // Keep recording — re-advertise so the phone can reconnect.
+          // The upload task will pause automatically until BLE is back.
           advertiseBLE();
-          switch_states(SystemState::RUNNING, SystemState::IDLE);
           haptic_notify(HapticEvent::BLE_DISCONNECT);
+          break;
+
+        case Event::BLE_CONNECTED:
+          haptic_notify(HapticEvent::BLE_CONNECT);
           break;
 
         default:
