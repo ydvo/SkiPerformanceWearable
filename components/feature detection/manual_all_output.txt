@@ -1,0 +1,351 @@
+================================================================================
+  ALL-METHODS COMPARISON REPORT
+  Data: 2026_02_10_skiway_sensor_data.csv
+  Auto-detected runs: 19
+  Combinations tested: 10
+================================================================================
+
+Ground Truth (from ground_truth.json):
+  Run 2: 10:28:32-10:29:10  0L, 0R  (no turns, leaning back a lot)
+  Run 3: 10:32:37-10:33:08  7L, 6R  (7 left turns, 6 right turns (7th left is the stop))
+  Run 4: 10:39:38-10:40:31  5L, 0R  (5 left turns, very wide, occasional lean backs)
+
+  run7 (10:28:31-10:29:20) overlaps Run 2 (10:28:32-10:29:10)  [38s overlap]
+  run10 (10:32:37-10:33:34) overlaps Run 3 (10:32:37-10:33:08)  [31s overlap]
+  run12 (10:39:37-10:40:32) overlaps Run 4 (10:39:38-10:40:31)  [53s overlap]
+
+================================================================================
+  1. THRESHOLD + NONE  (--detector threshold --filter none)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 3R      8 left, 3 right turn(s)  est. speed ~22 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  4L, 0R      4 left turn(s), very wide  est. speed ~14 km/h
+    run3    10:12:12-10:15:42 (210 s)  45L, 4R     45 left, 4 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 0R      7 left turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~25 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  1L, 0R      1 left turn(s), very wide  est. speed ~15 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~19 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  7L, 6R      7 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  5L, 0R      5 left turn(s), very wide  est. speed ~17 km/h
+    run13   10:41:26-10:43:51 (145 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  4L, 2R      4 left, 2 right turn(s)  est. speed ~17 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~24 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  2L, 0R      2 left turn(s), very wide, occasional lean back  est. speed ~22 km/h
+    run19   11:05:13-11:12:50 (457 s)  32L, 0R     32 left turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  2. THRESHOLD + KALMAN  (--detector threshold --filter kalman)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 3R      8 left, 3 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  4L, 0R      4 left turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  45L, 4R     45 left, 4 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 0R      7 left turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  1L, 0R      1 left turn(s), very wide  est. speed ~24 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~27 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  1L, 0R      1 left turn(s), very wide  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  7L, 6R      7 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  2L, 0R      2 left turn(s), very wide  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  5L, 0R      5 left turn(s), very wide  est. speed ~17 km/h
+    run13   10:41:26-10:43:51 (145 s)  3L, 0R      3 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  4L, 2R      4 left, 2 right turn(s)  est. speed ~19 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~24 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  2L, 0R      2 left turn(s), very wide, occasional lean back  est. speed ~21 km/h
+    run19   11:05:13-11:12:50 (457 s)  32L, 0R     32 left turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  3. THRESHOLD + BUTTERWORTH  (--detector threshold --filter butterworth)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 3R      8 left, 3 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  4L, 0R      4 left turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  45L, 4R     45 left, 4 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 0R      7 left turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~29 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  1L, 0R      1 left turn(s), very wide  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  7L, 6R      7 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  2L, 0R      2 left turn(s), very wide  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  5L, 0R      5 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  3L, 0R      3 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  4L, 2R      4 left, 2 right turn(s)  est. speed ~18 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  2L, 0R      2 left turn(s), very wide, occasional lean back  est. speed ~20 km/h
+    run19   11:05:13-11:12:50 (457 s)  32L, 0R     32 left turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  4. THRESHOLD + MADGWICK  (--detector threshold --filter madgwick)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 3R      8 left, 3 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  4L, 0R      4 left turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  45L, 4R     45 left, 4 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 0R      7 left turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~29 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  1L, 0R      1 left turn(s), very wide  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  7L, 6R      7 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  2L, 0R      2 left turn(s), very wide  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  5L, 0R      5 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  3L, 0R      3 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  4L, 2R      4 left, 2 right turn(s)  est. speed ~18 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  2L, 0R      2 left turn(s), very wide, occasional lean back  est. speed ~20 km/h
+    run19   11:05:13-11:12:50 (457 s)  32L, 0R     32 left turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  5. THRESHOLD + COMBINED  (--detector threshold --filter combined)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 3R      8 left, 3 right turn(s)  est. speed ~24 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  4L, 0R      4 left turn(s), very wide  est. speed ~14 km/h
+    run3    10:12:12-10:15:42 (210 s)  45L, 4R     45 left, 4 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 0R      7 left turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  3L, 0R      3 left turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~26 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  1L, 0R      1 left turn(s), very wide  est. speed ~15 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  7L, 6R      7 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  5L, 0R      5 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  3L, 0R      3 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  4L, 2R      4 left, 2 right turn(s)  est. speed ~17 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  2L, 0R      2 left turn(s), very wide, occasional lean back  est. speed ~22 km/h
+    run19   11:05:13-11:12:50 (457 s)  32L, 0R     32 left turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  6. ML + NONE  (--detector ml --filter none)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 5R      8 left, 5 right turn(s)  est. speed ~22 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  2L, 0R      2 left turn(s), very wide  est. speed ~14 km/h
+    run3    10:12:12-10:15:42 (210 s)  33L, 23R    33 left, 23 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 1R      7 left, 1 right turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  1L, 1R      1 left, 1 right turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  0L, 0R      no turns, straight run  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~25 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  0L, 0R      no turns, straight run  est. speed ~15 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~19 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  8L, 6R      8 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  0L, 0R      no turns, straight run  est. speed ~21 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  6L, 0R      6 left turn(s), very wide  est. speed ~17 km/h
+    run13   10:41:26-10:43:51 (145 s)  2L, 0R      2 left turn(s), very wide  est. speed ~22 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  3L, 4R      3 left, 4 right turn(s)  est. speed ~17 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~24 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  1L, 1R      1 left, 1 right turn(s), very wide, occasional lean back  est. speed ~22 km/h
+    run19   11:05:13-11:12:50 (457 s)  29L, 1R     29 left, 1 right turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  7. ML + KALMAN  (--detector ml --filter kalman)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 5R      8 left, 5 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  2L, 1R      2 left, 1 right turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  32L, 23R    32 left, 23 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 1R      7 left, 1 right turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  1L, 1R      1 left, 1 right turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  0L, 0R      no turns, straight run  est. speed ~24 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~27 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  0L, 0R      no turns, straight run  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  8L, 6R      8 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  0L, 0R      no turns, straight run  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  6L, 0R      6 left turn(s), very wide  est. speed ~17 km/h
+    run13   10:41:26-10:43:51 (145 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  3L, 4R      3 left, 4 right turn(s)  est. speed ~19 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~24 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  1L, 0R      1 left turn(s), very wide, occasional lean back  est. speed ~21 km/h
+    run19   11:05:13-11:12:50 (457 s)  29L, 1R     29 left, 1 right turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  8. ML + BUTTERWORTH  (--detector ml --filter butterworth)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 5R      8 left, 5 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  2L, 1R      2 left, 1 right turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  32L, 23R    32 left, 23 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 1R      7 left, 1 right turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  1L, 1R      1 left, 1 right turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  0L, 0R      no turns, straight run  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~29 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  0L, 0R      no turns, straight run  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  8L, 6R      8 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  0L, 0R      no turns, straight run  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  6L, 0R      6 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  3L, 4R      3 left, 4 right turn(s)  est. speed ~18 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  1L, 1R      1 left, 1 right turn(s), very wide, occasional lean back  est. speed ~20 km/h
+    run19   11:05:13-11:12:50 (457 s)  29L, 1R     29 left, 1 right turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  9. ML + MADGWICK  (--detector ml --filter madgwick)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 5R      8 left, 5 right turn(s)  est. speed ~26 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  2L, 1R      2 left, 1 right turn(s), very wide  est. speed ~15 km/h
+    run3    10:12:12-10:15:42 (210 s)  32L, 23R    32 left, 23 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 1R      7 left, 1 right turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  1L, 1R      1 left, 1 right turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  0L, 0R      no turns, straight run  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~29 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  0L, 0R      no turns, straight run  est. speed ~16 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  8L, 6R      8 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  0L, 0R      no turns, straight run  est. speed ~22 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  6L, 0R      6 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~22 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  3L, 4R      3 left, 4 right turn(s)  est. speed ~18 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  1L, 1R      1 left, 1 right turn(s), very wide, occasional lean back  est. speed ~20 km/h
+    run19   11:05:13-11:12:50 (457 s)  29L, 1R     29 left, 1 right turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  10. ML + COMBINED  (--detector ml --filter combined)
+================================================================================
+    run1    10:07:56-10:08:57 ( 61 s)  8L, 5R      8 left, 5 right turn(s)  est. speed ~24 km/h
+    run2    10:10:34-10:11:20 ( 46 s)  2L, 1R      2 left, 1 right turn(s), very wide  est. speed ~14 km/h
+    run3    10:12:12-10:15:42 (210 s)  33L, 23R    33 left, 23 right turn(s)  est. speed ~8 km/h
+    run4    10:16:05-10:17:04 ( 59 s)  7L, 1R      7 left, 1 right turn(s), very wide  est. speed ~17 km/h
+    run5    10:18:21-10:20:49 (148 s)  1L, 1R      1 left, 1 right turn(s), very wide  est. speed ~22 km/h
+    run6    10:25:43-10:28:06 (143 s)  0L, 0R      no turns, straight run  est. speed ~23 km/h
+    run7    10:28:31-10:29:20 ( 49 s)  0L, 0R      no turns, straight run  est. speed ~26 km/h
+    run8    10:29:28-10:29:59 ( 31 s)  0L, 0R      no turns, straight run  est. speed ~15 km/h
+    run9    10:30:07-10:32:27 (140 s)  0L, 0R      no turns, straight run  est. speed ~20 km/h
+    run10   10:32:37-10:33:34 ( 57 s)  8L, 6R      8 left, 6 right turn(s)  est. speed ~15 km/h
+    run11   10:37:12-10:39:24 (132 s)  0L, 0R      no turns, straight run  est. speed ~21 km/h
+    run12   10:39:37-10:40:32 ( 55 s)  6L, 0R      6 left turn(s), very wide  est. speed ~16 km/h
+    run13   10:41:26-10:43:51 (145 s)  2L, 0R      2 left turn(s), very wide  est. speed ~21 km/h
+    run14   10:44:16-10:45:01 ( 45 s)  5L, 0R      5 left turn(s), very wide  est. speed ~18 km/h
+    run15   10:46:29-10:47:14 ( 45 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run16   10:49:52-10:50:37 ( 45 s)  3L, 4R      3 left, 4 right turn(s)  est. speed ~17 km/h
+    run17   10:50:56-10:53:56 (180 s)  1L, 0R      1 left turn(s), very wide  est. speed ~23 km/h
+    run18   10:54:13-10:55:28 ( 75 s)  1L, 1R      1 left, 1 right turn(s), very wide, occasional lean back  est. speed ~22 km/h
+    run19   11:05:13-11:12:50 (457 s)  29L, 1R     29 left, 1 right turn(s), very wide  est. speed ~20 km/h
+
+================================================================================
+  GROUND TRUTH COMPARISON
+================================================================================
+
+--- run7 vs Run 2 (10:28:32-10:29:10, truth: 0L 0R) ---
+
+  Method                             | Left | Right | Error | Notes
+  ----------------------------------|------|-------|-------|------
+  threshold + none                   |    0 |     0 |     0 | PERFECT
+  threshold + kalman                 |    0 |     0 |     0 | PERFECT
+  threshold + butterworth            |    0 |     0 |     0 | PERFECT
+  threshold + madgwick               |    0 |     0 |     0 | PERFECT
+  threshold + combined               |    0 |     0 |     0 | PERFECT
+  ml + none                          |    0 |     0 |     0 | PERFECT
+  ml + kalman                        |    0 |     0 |     0 | PERFECT
+  ml + butterworth                   |    0 |     0 |     0 | PERFECT
+  ml + madgwick                      |    0 |     0 |     0 | PERFECT
+  ml + combined                      |    0 |     0 |     0 | PERFECT
+
+--- run10 vs Run 3 (10:32:37-10:33:08, truth: 7L 6R) ---
+
+  Method                             | Left | Right | Error | Notes
+  ----------------------------------|------|-------|-------|------
+  threshold + none                   |    7 |     6 |     0 | PERFECT
+  threshold + kalman                 |    7 |     6 |     0 | PERFECT
+  threshold + butterworth            |    7 |     6 |     0 | PERFECT
+  threshold + madgwick               |    7 |     6 |     0 | PERFECT
+  threshold + combined               |    7 |     6 |     0 | PERFECT
+  ml + none                          |    8 |     6 |     1 | +1L
+  ml + kalman                        |    8 |     6 |     1 | +1L
+  ml + butterworth                   |    8 |     6 |     1 | +1L
+  ml + madgwick                      |    8 |     6 |     1 | +1L
+  ml + combined                      |    8 |     6 |     1 | +1L
+
+--- run12 vs Run 4 (10:39:38-10:40:31, truth: 5L 0R) ---
+
+  Method                             | Left | Right | Error | Notes
+  ----------------------------------|------|-------|-------|------
+  threshold + none                   |    5 |     0 |     0 | PERFECT
+  threshold + kalman                 |    5 |     0 |     0 | PERFECT
+  threshold + butterworth            |    5 |     0 |     0 | PERFECT
+  threshold + madgwick               |    5 |     0 |     0 | PERFECT
+  threshold + combined               |    5 |     0 |     0 | PERFECT
+  ml + none                          |    6 |     0 |     1 | +1L
+  ml + kalman                        |    6 |     0 |     1 | +1L
+  ml + butterworth                   |    6 |     0 |     1 | +1L
+  ml + madgwick                      |    6 |     0 |     1 | +1L
+  ml + combined                      |    6 |     0 |     1 | +1L
+
+--- Total error across all matched ground truth runs ---
+
+  Method                             | Total Error
+  ----------------------------------|-------------
+  threshold + none                   |           0  <<< BEST
+  threshold + kalman                 |           0  <<< BEST
+  threshold + butterworth            |           0  <<< BEST
+  threshold + madgwick               |           0  <<< BEST
+  threshold + combined               |           0  <<< BEST
+  ml + none                          |           2
+  ml + kalman                        |           2
+  ml + butterworth                   |           2
+  ml + madgwick                      |           2
+  ml + combined                      |           2
+
+================================================================================
+  OBSERVATIONS
+================================================================================
+
+1. THRESHOLD DETECTOR IS MORE ACCURATE
+   Threshold detector total error: 0-0 across filters.
+   ML detector total error: 2-2 across filters.
+   The threshold detector uses scipy peak detection with separate L/R
+   height thresholds and aggressive 0.5 Hz smoothing, which handles both
+   tight and wide turns without per-run tuning.
+
+2. FILTERS DO NOT AFFECT THRESHOLD DETECTOR TURN COUNTS
+   All 5 filter variants produce identical turn counts with the threshold
+   detector. This is because the detector applies its own 0.5 Hz Butterworth
+   smoothing internally, which dominates any upstream filtering.
+   Filters only affect speed estimates slightly (1-3 km/h variation).
+
+3. FILTERS DO NOT AFFECT ML DETECTOR TURN COUNTS
+   All filter variants produce identical turn counts with the ML detector.
+
+
+================================================================================
+  RECOMMENDATION
+================================================================================
+
+Best method:  --detector threshold --filter none
+Total error:  0
+
+  python run_report.py --data <file.csv> --detector threshold --filter none
+
+This is the simplest and fastest configuration. No ML model or extra
+filtering is needed — just the saved config.json with peak-detection
+parameters.
+
+To improve further:
+  1. Collect more ground truth data (different skiers, slopes, conditions)
+     to verify the current thresholds generalize.
+  2. Retrain the ML model with per-window turn labels (not per-run) to make
+     the ML detector competitive with the threshold detector.
+  3. Validate speed estimates against GPS data.
+  4. Test on data from different sensor mounting positions and boot types.

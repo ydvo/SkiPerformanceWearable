@@ -1,0 +1,33 @@
+{
+  "date": "2026-02-10",
+  "offset_hours": 5,
+  "runs": [
+    {
+      "name": "run2",
+      "start": "10:28:32",
+      "end": "10:29:10",
+      "class": "straight",
+      "left": 0,
+      "right": 0,
+      "description": "no turns, leaning back a lot"
+    },
+    {
+      "name": "run3",
+      "start": "10:32:37",
+      "end": "10:33:08",
+      "class": "turning",
+      "left": 7,
+      "right": 6,
+      "description": "7 left turns, 6 right turns (7th left is the stop)"
+    },
+    {
+      "name": "run4",
+      "start": "10:39:38",
+      "end": "10:40:31",
+      "class": "turning",
+      "left": 5,
+      "right": 0,
+      "description": "5 left turns, very wide, occasional lean backs"
+    }
+  ]
+}
